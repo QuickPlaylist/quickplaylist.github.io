@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'self' https: http:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#14161a">
+  <meta name="description" content="Your Plex video playlists, one tap away.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Playlists">
+  <title>Plex Playlists</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="bar">
+    <button id="back" class="icon-btn" aria-label="Back" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <h1 id="title">Playlists</h1>
+    <button id="refresh" class="icon-btn" aria-label="Refresh" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+    </button>
+    <button id="menu" class="icon-btn" aria-label="Settings" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+    </button>
+  </header>
+
+  <main id="main" aria-live="polite"></main>
+
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <p id="signed-in-as" class="muted"></p>
+      <label class="row">
+        <span>When I tap a video</span>
+        <select id="link-mode">
+          <option value="app">Open the Plex app</option>
+          <option value="web">Open Plex in the browser</option>
+        </select>
+      </label>
+      <p class="muted small">Your Plex sign-in is kept only in this browser on this device. Nothing is sent anywhere except to Plex and your own server.</p>
+      <div class="actions">
+        <button type="button" id="signout" class="btn danger">Sign out</button>
+        <button value="close" class="btn">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <noscript><p class="center">This app needs JavaScript.</p></noscript>
+</body>
+</html>
