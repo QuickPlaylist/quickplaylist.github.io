@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'self' https: http:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'self' https: http:; media-src 'self' blob: https: http:; manifest-src 'self'; worker-src 'self' blob:; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#14161a">
   <meta name="description" content="Your Plex video playlists, one tap away.">
@@ -17,6 +17,7 @@
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
+  <script src="player.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -39,17 +40,44 @@
     <form method="dialog">
       <h2>Settings</h2>
       <p id="signed-in-as" class="muted"></p>
+      <div id="profile-row" class="row" hidden>
+        <span>Profile</span>
+        <div class="inline"><span id="profile-name"></span><button type="button" id="switch-profile" class="btn">Switch profile</button></div>
+      </div>
       <label class="row">
         <span>When I tap a video</span>
         <select id="link-mode">
+          <option value="here">Play it here</option>
           <option value="app">Open the Plex app</option>
           <option value="web">Open Plex in the browser</option>
+        </select>
+      </label>
+      <label class="row" id="quality-row">
+        <span>Video quality</span>
+        <select id="quality">
+          <option value="auto">Automatic</option>
+          <option value="original">Original (no conversion)</option>
+          <option value="8000">8 Mbps · 1080p</option>
+          <option value="4000">4 Mbps · 720p</option>
+          <option value="2000">2 Mbps · 720p (mobile data)</option>
         </select>
       </label>
       <p class="muted small">Your Plex sign-in is kept only in this browser on this device. Nothing is sent anywhere except to Plex and your own server.</p>
       <div class="actions">
         <button type="button" id="signout" class="btn danger">Sign out</button>
         <button value="close" class="btn">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="pin-dialog">
+    <form method="dialog">
+      <h2>Enter PIN</h2>
+      <p id="pin-for" class="muted"></p>
+      <input id="pin-input" class="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]*" aria-label="PIN">
+      <div class="actions">
+        <button value="cancel" class="btn">Cancel</button>
+        <button value="ok" class="btn primary">OK</button>
       </div>
     </form>
   </dialog>

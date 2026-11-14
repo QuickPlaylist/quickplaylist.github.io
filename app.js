@@ -117,9 +117,105 @@ async function finishSignIn(pinId) {
   polling = null;
   store.del('pendingPin');
   if (!token) { route(); return; }
-  store.set('token', token);
-  store.del('servers');
+  store.set('accountToken', token);
+  store.del('token');
+  store.del('profile');
   route();
+}
+
+// ---------- Plex Home profiles ----------
+// The account token can list Home profiles; switching gives a token for one
+// profile. The chosen profile is remembered, so the picker shows only once.
+async function loadProfiles() {
+  const home = await fetchJSON(`${CLIENTS}/api/v2/home/users`, { token: store.get('accountToken') });
+  return (home.users || []).map(u => ({
+    uuid: u.uuid, title: u.title || u.username || 'Profile', thumb: u.thumb || null,
+    protected: !!u.protected, admin: !!u.admin,
+  }));
+}
+
+async function useProfile(p, pin) {
+  const q = pin ? `?pin=${encodeURIComponent(pin)}` : '';
+  const res = await fetchJSON(`${CLIENTS}/api/v2/home/users/${encodeURIComponent(p.uuid)}/switch${q}`,
+    { token: store.get('accountToken'), method: 'POST' });
+  if (!res.authToken) throw new Error('No token');
+  // Different profile = different playlists and server tokens: start fresh.
+  ['servers', 'playlists'].forEach(k => store.del(k));
+  clearItemCaches();
+  store.set('token', res.authToken);
+  store.set('profile', { uuid: p.uuid, title: p.title, thumb: p.thumb, of: 0 });
+  lastSig = '';
+}
+
+function clearItemCaches() {
+  try { Object.keys(localStorage).filter(k => k.startsWith('pp.items.')).forEach(k => localStorage.removeItem(k)); }
+  catch { /* ignore */ }
+}
+
+async function chooseProfile() {
+  setBar({ title: "Who's watching?" });
+  main.dataset.view = 'profiles';
+  main.replaceChildren(el('p', { class: 'center muted' }, 'Loading profiles…'));
+  let profiles;
+  try { profiles = await loadProfiles(); }
+  catch (e) {
+    if (e.status === 401) { signOut(); return; }
+    main.replaceChildren(el('section', { class: 'empty' }, el('h2', {}, "Can't reach Plex"),
+      el('p', {}, 'Check your connection and try again.'),
+      el('button', { class: 'btn primary', onclick: chooseProfile }, 'Try again')));
+    return;
+  }
+  if (profiles.length <= 1) {
+    // No Plex Home (or only one profile): nothing to choose.
+    const only = profiles[0];
+    if (only && !only.protected) {
+      try { await useProfile(only); } catch { store.set('token', store.get('accountToken')); }
+    } else {
+      store.set('token', store.get('accountToken'));
+    }
+    store.set('profile', { ...(store.get('profile') || {}), of: profiles.length });
+    main.dataset.view = '';
+    route();
+    return;
+  }
+  main.replaceChildren(
+    el('p', { class: 'center muted' }, 'The app will remember your choice. You can change it later in Settings.'),
+    el('ul', { class: 'profiles' }, profiles.map(p => el('li', {},
+      el('button', { class: 'profile', onclick: () => pickProfile(p, profiles.length) },
+        el('span', { class: 'avatar', style: bg(p.thumb), 'aria-hidden': 'true' }, p.thumb ? '' : (p.title[0] || '?').toUpperCase()),
+        el('span', { class: 'pname' }, p.title),
+        p.protected ? el('span', { class: 'muted small' }, 'PIN') : null,
+      )))),
+  );
+}
+
+async function pickProfile(p, count) {
+  let pin;
+  if (p.protected) {
+    pin = await askPin(p.title);
+    if (pin == null) return;
+  }
+  try { await useProfile(p, pin); }
+  catch (e) {
+    showError(e.status === 401 || e.status === 403 ? 'That PIN did not work. Try again.' : 'Could not switch profile. Try again.');
+    return;
+  }
+  store.set('profile', { ...store.get('profile'), of: count });
+  main.dataset.view = '';
+  route();
+}
+
+function askPin(name) {
+  return new Promise(resolve => {
+    const d = $('#pin-dialog');
+    $('#pin-for').textContent = `Enter the PIN for ${name}.`;
+    const input = $('#pin-input');
+    input.value = '';
+    d.returnValue = '';
+    d.addEventListener('close', () => resolve(d.returnValue === 'ok' && input.value ? input.value : null), { once: true });
+    d.showModal();
+    input.focus();
+  });
 }
 
 // ---------- server discovery ----------
@@ -193,9 +289,10 @@ async function connect(server) {
   const uri = await pickConnection(server);
   if (!uri) { const e = new Error('unreachable'); e.unreachable = server.name; throw e; }
   server.uri = uri;
+  server.relay = !!(server.connections.find(c => c.uri === uri) || {}).relay;
   const all = store.get('servers') || [];
   const s = all.find(x => x.id === server.id);
-  if (s) { s.uri = uri; store.set('servers', all); }
+  if (s) { s.uri = uri; s.relay = server.relay; store.set('servers', all); }
   return uri;
 }
 
@@ -234,6 +331,7 @@ async function loadItems(serverId, playlistId) {
     title: mc.title,
     items: (mc.Metadata || []).map(m => ({
       key: m.key,
+      ratingKey: m.ratingKey,
       title: m.title,
       type: m.type,
       show: m.grandparentTitle || null,
@@ -257,8 +355,19 @@ function plexWebLink(serverId, metadataKey) {
   const page = isPlaylist ? 'playlist' : 'details';
   return `https://app.plex.tv/desktop/#!/server/${encodeURIComponent(serverId)}/${page}?key=${encodeURIComponent(metadataKey)}`;
 }
+// 'here' = play in this app's own player (default; avoids the Plex app's
+// profile picker), 'app' = Plex app deep link, 'web' = Plex Web.
+function linkMode() { return store.get('tapMode', 'here'); }
 function openLink(serverId, key) {
-  return store.get('linkMode', 'app') === 'web' ? plexWebLink(serverId, key) : plexAppLink(serverId, key);
+  return linkMode() === 'web' ? plexWebLink(serverId, key) : plexAppLink(serverId, key);
+}
+
+// Build a tappable row/button: plays in-app, or links out to Plex.
+function playLink(attrs, serverId, plexKey, onPlay, ...kids) {
+  if (linkMode() === 'here') {
+    return el('a', { ...attrs, href: '#', role: 'button', onclick: e => { e.preventDefault(); onPlay(); } }, ...kids);
+  }
+  return el('a', { ...attrs, href: openLink(serverId, plexKey) }, ...kids);
 }
 
 function imageUrl(server, path, w, h) {
@@ -434,17 +543,25 @@ function renderItems(serverId, playlistId, data) {
   const total = data.items.reduce((a, i) => a + i.duration, 0);
   const listKey = `/playlists/${playlistId}`;
   const cachedList = (store.get('playlists') || { playlists: [] }).playlists.find(p => p.server === serverId && p.id === playlistId);
+  const play = i => window.Player.open({
+    server, items: data.items, index: i, playlistTitle: data.title,
+    quality: store.get('quality', 'auto'),
+    headers: plexHeaders(server && server.token),
+    reconnect: async () => { server.uri = null; await connect(server); return server; },
+    onClose: () => showPlaylist(serverId, playlistId), // pick up new watch progress
+  });
+  const inApp = linkMode() === 'here';
   main.replaceChildren(
     el('section', { class: 'hero' },
       el('div', { class: 'art', style: bg(imageUrl(server, cachedList && cachedList.art, 300, 300)), 'aria-hidden': 'true' }),
       el('div', {},
         el('p', { class: 'meta' }, `${data.items.length} video${data.items.length === 1 ? '' : 's'}${total ? ' · ' + fmtDuration(total) : ''}`),
-        data.items.length ? el('a', { class: 'btn primary', href: openLink(serverId, listKey) }, '▶ Play all in Plex') : null,
+        data.items.length ? playLink({ class: 'btn primary' }, serverId, listKey, () => play(0), inApp ? '▶ Play all' : '▶ Play all in Plex') : null,
       ),
     ),
     data.items.length
       ? el('ol', { class: 'list' }, data.items.map((it, i) => el('li', {},
-        el('a', { class: 'item', href: openLink(serverId, it.key) },
+        playLink({ class: 'item' }, serverId, it.key, () => play(i),
           el('span', { class: 'num', 'aria-hidden': 'true' }, it.watched ? '✓' : String(i + 1)),
           el('div', { class: 'thumb' + (it.poster ? ' poster' : ''), style: bg(imageUrl(server, it.thumb, it.poster ? 120 : 240, it.poster ? 180 : 135)), 'aria-hidden': 'true' }),
           el('div', { class: 'text' },
@@ -458,11 +575,11 @@ function renderItems(serverId, playlistId, data) {
 }
 
 // ---------- settings ----------
+const DEVICE_PREFS = ['clientId', 'tapMode', 'quality'];
 function signOut() {
-  const keep = { clientId: store.get('clientId'), linkMode: store.get('linkMode') };
+  const keep = Object.fromEntries(DEVICE_PREFS.map(k => [k, store.get(k)]));
   store.clearAll();
-  if (keep.clientId) store.set('clientId', keep.clientId);
-  if (keep.linkMode) store.set('linkMode', keep.linkMode);
+  for (const [k, v] of Object.entries(keep)) if (v != null) store.set(k, v);
   lastSig = '';
   main.dataset.view = '';
   if ($('#settings').open) $('#settings').close();
@@ -472,22 +589,37 @@ function signOut() {
 
 async function openSettings() {
   const d = $('#settings');
-  $('#link-mode').value = store.get('linkMode', 'app');
+  $('#link-mode').value = linkMode();
+  $('#quality').value = store.get('quality', 'auto');
+  $('#quality-row').hidden = linkMode() !== 'here';
+  const profile = store.get('profile') || {};
+  $('#profile-row').hidden = !(profile.of > 1);
+  $('#profile-name').textContent = profile.title || '';
   const who = $('#signed-in-as');
   who.textContent = '';
   d.showModal();
   try {
-    const u = await fetchJSON(`${PLEX_TV}/api/v2/user`, { token: store.get('token') });
+    const u = await fetchJSON(`${PLEX_TV}/api/v2/user`, { token: store.get('accountToken') || store.get('token') });
     who.textContent = `Signed in to Plex as ${u.username || u.title || 'your account'}.`;
   } catch { /* offline: leave blank */ }
 }
 
 // ---------- routing ----------
 function route() {
+  // Installs from before profiles existed: their token is the account token.
+  // Move it over and let the profile step run once.
+  if (store.get('token') && !store.get('accountToken')) {
+    store.set('accountToken', store.get('token'));
+    store.del('token');
+  }
   const pending = store.get('pendingPin');
-  if (!store.get('token')) {
+  if (!store.get('accountToken')) {
     if (pending && Date.now() - pending.at < 10 * 60_000) { renderWaitingForSignIn(); finishSignIn(pending.id); }
     else renderSignIn();
+    return;
+  }
+  if (!store.get('token')) {
+    if (main.dataset.view !== 'profiles') chooseProfile();
     return;
   }
   const m = location.hash.match(/^#\/p\/([^/]+)\/([^/]+)$/);
@@ -511,7 +643,18 @@ $('#refresh').addEventListener('click', () => {
 });
 $('#menu').addEventListener('click', openSettings);
 $('#signout').addEventListener('click', signOut);
-$('#link-mode').addEventListener('change', e => { store.set('linkMode', e.target.value); route(); });
+$('#link-mode').addEventListener('change', e => {
+  store.set('tapMode', e.target.value);
+  $('#quality-row').hidden = e.target.value !== 'here';
+  route();
+});
+$('#quality').addEventListener('change', e => store.set('quality', e.target.value));
+$('#switch-profile').addEventListener('click', () => {
+  $('#settings').close();
+  store.del('token');
+  main.dataset.view = '';
+  route();
+});
 window.addEventListener('hashchange', route);
 
 // Keep the list fresh: refresh whenever the app comes back to the foreground,
