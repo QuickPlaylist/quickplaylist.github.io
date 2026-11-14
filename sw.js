@@ -1,7 +1,7 @@
 // Service worker: makes the app installable and opens instantly offline.
 // App files are fetched network-first, so a new deploy reaches phones on the
 // next open. Plex API calls (other origins) are never cached here.
-const CACHE = 'plex-playlists-v2';
+const CACHE = 'plex-playlists-v3';
 const SHELL = ['./', 'index.html', 'app.js', 'player.js', 'vendor/hls.light.min.js', 'styles.css', 'manifest.webmanifest', 'auth-done.html', 'auth-done.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 

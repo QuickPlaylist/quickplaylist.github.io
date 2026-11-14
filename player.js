@@ -87,13 +87,19 @@
   // ---------- public ----------
   async function open(opts) {
     if (!ui) build();
+    // Phones only let a video start with sound from inside a tap, and going
+    // fullscreen uses up that tap. So call play() first, synchronously: that
+    // unlocks this <video> for later play() calls, after the stream loads.
+    // (It rejects now because there is no source yet; that's expected.)
+    const unlock = ui.video.play();
+    if (unlock) unlock.catch(() => {});
     if (s) await teardown();
     s = { ...opts, pushed: false, timer: null, upNext: null };
     ui.root.hidden = false;
     document.documentElement.classList.add('player-open');
     history.pushState({ ppPlayer: 1 }, '');
     s.pushed = true;
-    // Still inside the tap, so fullscreen and rotation are allowed.
+    // Fullscreen and rotation also need the tap.
     try { await ui.root.requestFullscreen({ navigationUI: 'hide' }); } catch { /* not supported (iPhone) */ }
     try { await screen.orientation.lock('landscape'); } catch { /* not supported */ }
     load(s.index);
@@ -260,7 +266,11 @@
 
   async function start() {
     try { await ui.video.play(); }
-    catch { showStatus('Tap play to start.', []); } // autoplay with sound blocked
+    catch (e) {
+      if (e && e.name === 'AbortError') return; // replaced by another load
+      // The phone refused to start with sound. A tap here always works.
+      showStatus('', [['▶ Play', () => { hideStatus(); ui.video.play().catch(() => {}); }]]);
+    }
   }
 
   function onMediaError() {
