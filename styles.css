@@ -147,7 +147,7 @@ html.player-open, html.player-open body { overflow: hidden; }
 .player .p-bottom { justify-content: center; flex-wrap: wrap; padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
 .player .icon-btn { color: #fff; }
 .player .icon-btn:active { background: rgb(255 255 255 / .15); }
-.player .p-title { min-width: 0; display: flex; flex-direction: column; }
+.player .p-title { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .player .p-title strong, .player .p-title small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player .p-title small { color: #b9bec7; }
 .player .btn { background: rgb(255 255 255 / .14); color: #fff; min-height: 40px; padding: 0 14px; font-size: .95rem; }

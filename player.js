@@ -50,6 +50,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
         <div class="p-title"><strong></strong><small></small></div>
+        <button class="icon-btn p-fs" aria-label="Full screen">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+        </button>
       </div>
       <video playsinline controls preload="auto"></video>
       <div class="p-status" hidden>
@@ -69,6 +72,10 @@
       prev: q('.p-prev'), next: q('.p-next'), restart: q('.p-restart'),
     };
     q('.p-close').addEventListener('click', () => close());
+    q('.p-fs').addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) { try { screen.orientation.unlock(); } catch { /* ignore */ } }
+    });
     ui.prev.addEventListener('click', () => go(s.index - 1));
     ui.next.addEventListener('click', () => go(s.index + 1));
     ui.restart.addEventListener('click', () => { ui.video.currentTime = 0; ui.restart.hidden = true; ui.video.play().catch(() => {}); });
@@ -87,22 +94,28 @@
   // ---------- public ----------
   async function open(opts) {
     if (!ui) build();
-    // Phones only let a video start with sound from inside a tap, and going
-    // fullscreen uses up that tap. So call play() first, synchronously: that
-    // unlocks this <video> for later play() calls, after the stream loads.
-    // (It rejects now because there is no source yet; that's expected.)
-    const unlock = ui.video.play();
-    if (unlock) unlock.catch(() => {});
+    // Opening does exactly what Next does: show the player and load. It does
+    // not go fullscreen by itself, because phones let a video start with
+    // sound only within a few seconds of a tap, and going fullscreen uses
+    // that tap up. The ⛶ button (or the video's own control) goes fullscreen.
     if (s) await teardown();
     s = { ...opts, pushed: false, timer: null, upNext: null };
     ui.root.hidden = false;
     document.documentElement.classList.add('player-open');
     history.pushState({ ppPlayer: 1 }, '');
     s.pushed = true;
-    // Fullscreen and rotation also need the tap.
-    try { await ui.root.requestFullscreen({ navigationUI: 'hide' }); } catch { /* not supported (iPhone) */ }
-    try { await screen.orientation.lock('landscape'); } catch { /* not supported */ }
     load(s.index);
+  }
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) { await document.exitFullscreen(); return; }
+      await ui.root.requestFullscreen({ navigationUI: 'hide' });
+      try { await screen.orientation.lock('landscape'); } catch { /* not supported */ }
+    } catch {
+      // iPhone: only the video itself can go fullscreen.
+      if (ui.video.webkitEnterFullscreen) ui.video.webkitEnterFullscreen();
+    }
   }
 
   async function close() {
@@ -124,11 +137,12 @@
     load(i);
   }
 
-  async function load(i, { forceHls = false, retried = false } = {}) {
+  async function load(i, { forceHls = false, retried = false, keepReloaded = false } = {}) {
     await teardown({ keepOpen: true });
     s.index = i;
     s.session = uuid();
     s.forcedHls = forceHls;
+    if (!keepReloaded) s.reloaded = false;
     const item = s.items[i];
     ui.title.textContent = item.title;
     ui.sub.textContent = `${s.playlistTitle} · ${i + 1} of ${s.items.length}`;
@@ -144,7 +158,7 @@
       meta = meta.MediaContainer.Metadata[0];
     } catch (e) {
       if (!retried && s.reconnect) {
-        try { s.server = await s.reconnect(); return load(i, { forceHls, retried: true }); } catch { /* fall through */ }
+        try { s.server = await s.reconnect(); return load(i, { forceHls, retried: true, keepReloaded }); } catch { /* fall through */ }
       }
       return showStatus("Can't reach your Plex server.", [['Try again', () => load(i)], ['Close', close]]);
     }
@@ -274,10 +288,15 @@
   }
 
   function onMediaError() {
-    if (!s) return;
-    // A direct file the browser turned out not to like: let Plex convert it.
-    if (s.mode === 'direct' && !s.forcedHls) { load(s.index, { forceHls: true }); return; }
-    showStatus('Playback stopped with an error.', [['Try again', () => load(s.index, { forceHls: true })], ['Skip', () => go(s.index + 1)], ['Close', close]]);
+    // Ignore errors from an empty or torn-down <video>.
+    if (!s || !s.mode) return;
+    const err = ui.video.error;
+    const code = err ? `${err.code}${err.message ? ' ' + err.message : ''}` : 'stream';
+    // First error on this video: reload it once, exactly as Next would.
+    if (!s.reloaded) { s.reloaded = true; load(s.index, { forceHls: s.forcedHls, keepReloaded: true }); return; }
+    // A direct file the browser still won't play: let Plex convert it.
+    if (s.mode === 'direct' && !s.forcedHls) { load(s.index, { forceHls: true, keepReloaded: true }); return; }
+    showStatus(`Playback stopped with an error (${code}).`, [['Try again', () => load(s.index, { forceHls: true })], ['Skip', () => go(s.index + 1)], ['Close', close]]);
   }
 
   function onEnded() {
