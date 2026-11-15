@@ -96,7 +96,7 @@ async function signIn() {
   const win = window.open('', '_blank');
   let pin;
   try { pin = await createPin(); }
-  catch (e) { if (win) win.close(); showError('Could not reach plex.tv. Check your connection and try again.'); return; }
+  catch (e) { if (win) win.close(); noteProblem('starting sign-in', e); showError('Could not reach plex.tv. Check your connection and try again.'); return; }
   store.set('pendingPin', { id: pin.id, at: Date.now() });
   const done = new URL('auth-done.html', location.href).href;
   if (win && !win.closed) {
@@ -142,6 +142,7 @@ async function useProfile(p, pin) {
   // Different profile = different playlists and server tokens: start fresh.
   ['servers', 'playlists'].forEach(k => store.del(k));
   clearItemCaches();
+  forgetProblems();
   store.set('token', res.authToken);
   store.set('profile', { uuid: p.uuid, title: p.title, thumb: p.thumb, of: 0 });
   lastSig = '';
@@ -160,9 +161,11 @@ async function chooseProfile() {
   try { profiles = await loadProfiles(); }
   catch (e) {
     if (e.status === 401) { signOut(); return; }
+    noteProblem('loading profiles', e);
     main.replaceChildren(el('section', { class: 'empty' }, el('h2', {}, "Can't reach Plex"),
       el('p', {}, 'Check your connection and try again.'),
-      el('button', { class: 'btn primary', onclick: chooseProfile }, 'Try again')));
+      el('button', { class: 'btn primary', onclick: chooseProfile }, 'Try again'),
+      el('p', { class: 'after small' }, bugLink('Report a bug'))));
     return;
   }
   if (profiles.length <= 1) {
@@ -197,6 +200,7 @@ async function pickProfile(p, count) {
   }
   try { await useProfile(p, pin); }
   catch (e) {
+    noteProblem('switching profile', e);
     showError(e.status === 401 || e.status === 403 ? 'That PIN did not work. Try again.' : 'Could not switch profile. Try again.');
     return;
   }
@@ -431,6 +435,7 @@ function renderSignIn() {
     el('h2', {}, 'Your Plex playlists, one tap away'),
     el('p', {}, 'Sign in with your Plex account. Your sign-in stays on this device — it is never sent to anyone but Plex and your own server.'),
     el('button', { class: 'btn primary big', onclick: signIn }, 'Sign in with Plex'),
+    el('p', { class: 'after small' }, bugLink('Trouble signing in? Report a bug')),
   ));
 }
 
@@ -502,12 +507,14 @@ async function refreshHome({ force = false } = {}) {
   refreshing = (async () => {
     try {
       const data = await loadPlaylists({ force });
+      if (data.errors.length) lastProblem = `loading playlists: ${data.errors.length === data.servers.length ? 'all' : 'some'} servers unreachable`;
       const sig = JSON.stringify([data.playlists, data.errors.map(e => e.server)]);
       store.set('playlists', { servers: data.servers, playlists: data.playlists, errors: [] });
       if (main.dataset.view === 'home' && (sig !== lastSig || force)) renderPlaylists(data);
       lastSig = sig;
     } catch (e) {
       if (e.status === 401) { signOut(); return; }
+      noteProblem('loading playlists', e);
       if (main.dataset.view === 'home') showError(describeError(e));
     } finally {
       setSpinning(false);
@@ -533,6 +540,7 @@ async function showPlaylist(serverId, playlistId) {
     if (main.dataset.view === view && JSON.stringify(data) !== JSON.stringify(cached)) renderItems(serverId, playlistId, data);
   } catch (e) {
     if (e.status === 401) { signOut(); return; }
+    noteProblem('loading a playlist', e);
     if (main.dataset.view === view) showError(describeError(e));
   } finally { setSpinning(false); }
 }
@@ -548,6 +556,7 @@ function renderItems(serverId, playlistId, data) {
     quality: store.get('quality', 'auto'),
     headers: plexHeaders(server && server.token),
     reconnect: async () => { server.uri = null; await connect(server); return server; },
+    report: () => window.open(bugUrl(), '_blank', 'noopener,noreferrer'),
     onClose: () => showPlaylist(serverId, playlistId), // pick up new watch progress
   });
   const inApp = linkMode() === 'here';
@@ -580,6 +589,7 @@ function signOut() {
   const keep = Object.fromEntries(DEVICE_PREFS.map(k => [k, store.get(k)]));
   store.clearAll();
   for (const [k, v] of Object.entries(keep)) if (v != null) store.set(k, v);
+  forgetProblems();
   lastSig = '';
   main.dataset.view = '';
   if ($('#settings').open) $('#settings').close();
@@ -602,6 +612,99 @@ async function openSettings() {
     const u = await fetchJSON(`${PLEX_TV}/api/v2/user`, { token: store.get('accountToken') || store.get('token') });
     who.textContent = `Signed in to Plex as ${u.username || u.title || 'your account'}.`;
   } catch { /* offline: leave blank */ }
+}
+
+// ---------- bug reports ----------
+// Opens a new GitHub issue pre-filled with what helps reproduce a problem.
+// Issues are public, and the whole report travels to github.com in the link,
+// so every value in it is fixed wording from this code, a number, or a name
+// picked from a fixed list. Nothing is copied from Plex, from stored data, from
+// error messages or from the browser's user-agent text (all can carry names,
+// addresses, tokens or device details).
+const ISSUES = 'https://github.com/claytonkimber/plex-playlists/issues/new';
+let lastProblem = null;
+
+// `where` is always fixed wording from this file; `e` becomes a category.
+function noteProblem(where, e) {
+  lastProblem = `${where}: ${errorKind(e)}`;
+}
+
+// Forget remembered errors, so the next person on this device doesn't report them.
+function forgetProblems() {
+  lastProblem = null;
+  if (window.Player) Player.forgetError();
+}
+
+const ERROR_NAMES = new Set(['Error', 'TypeError', 'SyntaxError', 'RangeError', 'ReferenceError', 'NotAllowedError',
+  'NotSupportedError', 'InvalidStateError', 'SecurityError', 'QuotaExceededError', 'NetworkError', 'TimeoutError']);
+function errorKind(e) {
+  if (e && e.unreachable) return 'server unreachable';   // e.unreachable holds the server's name: leave it out
+  if (e && e.status) return `HTTP ${Number(e.status) || 'error'}`;
+  if (e && e.name === 'AbortError') return 'request cancelled or timed out';
+  if (e && e.name === 'TypeError' && /^(Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.?)$/.test(e.message)) return 'network error';
+  return e && ERROR_NAMES.has(e.name) ? e.name : 'other error';
+}
+
+// "Chrome 131 on Android 14": names from fixed lists and version numbers only.
+// The raw user-agent text can also carry the phone model, carrier and language.
+function browserSummary() {
+  const ua = navigator.userAgent || '';
+  const v = (re, name) => { const m = ua.match(re); return m ? `${name} ${m[1]}` : null; };
+  const browser = v(/SamsungBrowser\/(\d+)/, 'Samsung Internet') || v(/Edg(?:A|iOS)?\/(\d+)/, 'Edge') ||
+    v(/(?:OPR|OPT)\/(\d+)/, 'Opera') || v(/(?:Firefox|FxiOS)\/(\d+)/, 'Firefox') || v(/CriOS\/(\d+)/, 'Chrome') ||
+    v(/Chrome\/(\d+)/, 'Chrome') || v(/Version\/(\d+)[\d.]* (?:Mobile\/\S+ )?Safari/, 'Safari') || 'other browser';
+  const iPadAsMac = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+  const os = v(/Android (\d+)/, 'Android') ||
+    (/iPhone|iPad|iPod/.test(ua) ? v(/OS (\d+)_/, 'iOS') || 'iOS' : null) ||
+    (iPadAsMac ? 'iPadOS' : null) || (/Macintosh/.test(ua) ? 'macOS' : null) ||
+    (/Windows/.test(ua) ? 'Windows' : null) || (/CrOS/.test(ua) ? 'ChromeOS' : null) ||
+    (/Linux/.test(ua) ? 'Linux' : null) || 'other OS';
+  const inApp = /FBAN|FBAV|Instagram|Line\/|; wv\)|GSA\//.test(ua) ? ' (in-app browser)' : '';
+  return `${browser}${inApp} on ${os}`;
+}
+
+function viewName() {
+  if (window.Player && Player.info().open) return 'video player';
+  const v = main.dataset.view || '';
+  if (v === 'home') return 'playlist list';
+  if (v.startsWith('p:')) return 'one playlist';
+  if (v === 'profiles') return "Who's watching?";
+  return store.get('accountToken') ? 'loading' : 'sign-in';
+}
+
+function bugUrl() {
+  // The option's own label, from the page, never the stored value itself.
+  const label = (sel, value) => { const o = [...$(sel).options].find(x => x.value === value); return o ? o.textContent : 'unknown'; };
+  const servers = store.get('servers');
+  const list = Array.isArray(servers) ? servers : [];
+  // Which kinds of connection are in use, not how many servers (that says something about the household).
+  const kinds = ['direct', 'via Plex relay', 'not connected yet'].filter(k =>
+    list.some(s => (!s || !s.uri ? 'not connected yet' : s.relay ? 'via Plex relay' : 'direct') === k));
+  const profile = store.get('profile') || {};
+  const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const n = x => Math.round(Number(x) * 100) / 100 || 0;
+  const lines = [
+    '**What happened?**', '', '',
+    '**What did you expect?**', '', '',
+    '---',
+    `Screen: ${viewName()}`,
+    `Signed in: ${store.get('accountToken') ? 'yes' : 'no'}${profile.of > 1 ? ' (Plex Home)' : ''}`,
+    `Server connections: ${kinds.length ? kinds.join(', ') : 'no server found'}`,
+    `When I tap a video: ${label('#link-mode', linkMode())} · Video quality: ${label('#quality', store.get('quality', 'auto'))}`,
+    `Installed as an app: ${installed ? 'yes' : 'no'} · Works offline: ${navigator.serviceWorker && navigator.serviceWorker.controller ? 'yes' : 'no'}`,
+    `Browser: ${browserSummary()}`,
+    `Screen size: ${n(screen.width)}×${n(screen.height)} @${n(devicePixelRatio)}x`,
+  ];
+  const p = window.Player ? Player.info().lastError : null;
+  if (p) lines.push(`Last playback problem: ${p.report} (${p.how}${p.media ? `; file: ${p.media}` : ''})`);
+  if (lastProblem) lines.push(`Last loading problem: ${lastProblem}`);
+  lines.push('', "_Issues are public. This report leaves out your Plex sign-in, user, profile and server names, server addresses, and playlist and video titles. Please don't add them, or screenshots that show them, unless you're happy for anyone to see them._");
+  return `${ISSUES}?${new URLSearchParams({ title: 'Bug: ', body: lines.join('\n') })}`;
+}
+
+// A link that fills in the report at the moment it's tapped.
+function bugLink(text) {
+  return el('a', { class: 'text-link', href: ISSUES, target: '_blank', rel: 'noopener noreferrer', onclick: e => { e.currentTarget.href = bugUrl(); } }, text);
 }
 
 // ---------- routing ----------
@@ -642,6 +745,7 @@ $('#refresh').addEventListener('click', () => {
   else refreshHome({ force: true });
 });
 $('#menu').addEventListener('click', openSettings);
+$('#report-bug').addEventListener('click', e => { e.currentTarget.href = bugUrl(); });
 $('#signout').addEventListener('click', signOut);
 $('#link-mode').addEventListener('change', e => {
   store.set('tapMode', e.target.value);

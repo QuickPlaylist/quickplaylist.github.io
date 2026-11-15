@@ -18,6 +18,9 @@
   let s = null;      // current session state
   let ui = null;     // DOM refs
   let hlsLib = null; // promise for hls.js, loaded on first need
+  // Last playback failure, for bug reports. Issues are public, so it holds only
+  // fixed wording, numbers and codec names: never text from Plex or the browser.
+  let lastError = null;
 
   function loadHls() {
     if (!hlsLib) {
@@ -142,6 +145,8 @@
     s.index = i;
     s.session = uuid();
     s.forcedHls = forceHls;
+    s.mediaInfo = null;
+    s.hlsVia = null;
     if (!keepReloaded) s.reloaded = false;
     const item = s.items[i];
     ui.title.textContent = item.title;
@@ -160,13 +165,14 @@
       if (!retried && s.reconnect) {
         try { s.server = await s.reconnect(); return load(i, { forceHls, retried: true, keepReloaded }); } catch { /* fall through */ }
       }
-      return showStatus("Can't reach your Plex server.", [['Try again', () => load(i)], ['Close', close]]);
+      return fail("Can't reach your Plex server.", [['Try again', () => load(i)], ['Close', close]]);
     }
     s.meta = meta;
     s.duration = meta.duration || item.duration || 0;
     const media = (meta.Media || [])[0];
     const part = media && (media.Part || [])[0];
-    if (!part) return showStatus('This video has no playable file.', [['Skip', () => go(i + 1)], ['Close', close]]);
+    if (media) s.mediaInfo = describeMedia(media);
+    if (!part) return fail('This video has no playable file.', [['Skip', () => go(i + 1)], ['Close', close]]);
 
     // Resume unless it's (nearly) finished.
     const offset = meta.viewOffset || 0;
@@ -178,7 +184,7 @@
       if (direct) await playDirect(part);
       else await playHls(bitrate);
     } catch (e) {
-      showStatus(e.message || 'Could not play this video.', [['Try again', () => load(i)], ['Close', close]]);
+      fail(e.message || 'Could not play this video.', [['Try again', () => load(i)], ['Close', close]], e.report || errorKind(e));
       return;
     }
     if (s.startAt) ui.restart.hidden = false;
@@ -190,6 +196,33 @@
     if (q === 'original') return 0;
     if (q === 'auto') return s.server.relay ? RELAY_BITRATE : 0;
     return Number(q) || 0;
+  }
+
+  // File format only (e.g. "mkv / hevc / eac3 / 1080p"): enough to reproduce, nothing personal.
+  // Each field is picked from a list of known names; anything else is "other".
+  const KNOWN = {
+    container: ['mkv', 'mp4', 'm4v', 'mov', 'avi', 'webm', 'mpegts', 'ts', 'm2ts', 'mpeg', 'wmv', 'asf', 'flv', '3gp', 'ogg'],
+    videoCodec: ['h264', 'hevc', 'av1', 'vp9', 'vp8', 'mpeg2video', 'mpeg4', 'msmpeg4v3', 'vc1', 'wmv3', 'h263', 'mjpeg', 'theora'],
+    audioCodec: ['aac', 'ac3', 'eac3', 'dca', 'dca-ma', 'dts', 'truehd', 'flac', 'opus', 'mp3', 'mp2', 'vorbis', 'pcm', 'alac', 'wmapro', 'wmav2'],
+    videoResolution: ['sd', '480', '576', '720', '1080', '2k', '4k', '8k'],
+  };
+  function describeMedia(m) {
+    const pick = k => (m[k] == null ? null : KNOWN[k].includes(String(m[k]).toLowerCase()) ? String(m[k]).toLowerCase() : 'other');
+    const res = pick('videoResolution');
+    return [pick('container'), pick('videoCodec'), pick('audioCodec'), res && (/^\d+$/.test(res) ? res + 'p' : res)].filter(Boolean).join(' / ');
+  }
+
+  // An error that came with its own report-safe wording.
+  const own = (msg, report = msg) => Object.assign(new Error(msg), { report });
+
+  // Any other error, as a category only: error text can quote server replies or addresses.
+  const ERROR_NAMES = new Set(['Error', 'TypeError', 'SyntaxError', 'RangeError', 'ReferenceError', 'NotAllowedError',
+    'NotSupportedError', 'InvalidStateError', 'SecurityError', 'QuotaExceededError', 'NetworkError', 'TimeoutError']);
+  function errorKind(e) {
+    if (e && e.status) return `HTTP ${Number(e.status) || 'error'}`;
+    if (e && e.name === 'AbortError') return 'request cancelled or timed out';
+    if (e && e.name === 'TypeError' && /^(Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.?)$/.test(e.message)) return 'network error';
+    return e && ERROR_NAMES.has(e.name) ? e.name : 'other error';
   }
 
   const CONTAINERS = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', webm: 'video/webm' };
@@ -250,11 +283,16 @@
     // Ask Plex first so a "can't play" answer becomes a readable message.
     const d = await api(`/video/:/transcode/universal/decision?${new URLSearchParams(params)}`).catch(() => null);
     const mc = d && d.MediaContainer;
-    if (mc && mc.generalDecisionCode >= 2000) throw new Error(`Plex can't play this video: ${mc.generalDecisionText || 'unknown reason'}`);
+    if (mc && mc.generalDecisionCode >= 2000) {
+      // Show Plex's reason on screen; the report gets only the numeric code.
+      throw own(`Plex can't play this video: ${mc.generalDecisionText || 'unknown reason'}`,
+        `Plex can't play this video (decision code ${Number(mc.generalDecisionCode)})`);
+    }
     const url = serverUrl('/video/:/transcode/universal/start.m3u8', params);
     const v = ui.video;
     const Hls = await loadHls().catch(() => null);
     if (Hls && Hls.isSupported()) {
+      s.hlsVia = 'hls.js';
       const hls = new Hls({ startPosition: s.startAt || -1, enableWorker: true, maxBufferLength: 30 });
       s.hls = hls;
       let recovered = false;
@@ -267,13 +305,14 @@
       hls.attachMedia(v);
       await new Promise((resolve, reject) => {
         hls.once(Hls.Events.MANIFEST_PARSED, resolve);
-        hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(new Error('Plex could not start the stream.')); });
+        hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(own('Plex could not start the stream.')); });
       });
     } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      s.hlsVia = 'the browser';
       v.src = url;
       if (s.startAt) v.addEventListener('loadedmetadata', () => { v.currentTime = s.startAt; }, { once: true });
     } else {
-      throw new Error("This browser can't play this video.");
+      throw own("This browser can't play this video.");
     }
     await start();
   }
@@ -296,7 +335,21 @@
     if (!s.reloaded) { s.reloaded = true; load(s.index, { forceHls: s.forcedHls, keepReloaded: true }); return; }
     // A direct file the browser still won't play: let Plex convert it.
     if (s.mode === 'direct' && !s.forcedHls) { load(s.index, { forceHls: true, keepReloaded: true }); return; }
-    showStatus(`Playback stopped with an error (${code}).`, [['Try again', () => load(s.index, { forceHls: true })], ['Skip', () => go(s.index + 1)], ['Close', close]]);
+    // The report gets the error number and the browser's leading error name (e.g.
+    // PIPELINE_ERROR_DECODE), never the rest of its message. Browser error names
+    // always contain an underscore, so an all-caps word such as a server name won't match.
+    const name = err && typeof err.message === 'string' ? (err.message.match(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/) || [])[0] : null;
+    const safe = err ? `MediaError ${Number(err.code) || '?'}${name ? ' ' + name : ''}` : 'stream error';
+    fail(`Playback stopped with an error (${code}).`, [['Try again', () => load(s.index, { forceHls: true })], ['Skip', () => go(s.index + 1)], ['Close', close]],
+      `Playback stopped with an error (${safe})`);
+  }
+
+  // An error state: remember what failed for a bug report, and offer to file one.
+  // `msg` is shown on screen; `report` is the only wording a bug report gets.
+  function fail(msg, actions, report = msg) {
+    const how = s.mode === 'hls' ? (s.hlsVia ? `HLS via ${s.hlsVia}` : 'HLS, before the stream started') : s.mode === 'direct' ? 'direct play' : 'before playback started';
+    lastError = { report, how, media: s.mediaInfo };
+    showStatus(msg, s.report ? [...actions, ['Report a problem', s.report]] : actions);
   }
 
   function onEnded() {
@@ -387,5 +440,5 @@
     } catch { /* ignore */ }
   }
 
-  window.Player = { open, close };
+  window.Player = { open, close, info: () => ({ open: !!s, lastError }), forgetError: () => { lastError = null; } };
 })();

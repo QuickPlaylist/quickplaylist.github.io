@@ -62,7 +62,21 @@
           <option value="2000">2 Mbps · 720p (mobile data)</option>
         </select>
       </label>
-      <p class="muted small">Your Plex sign-in is kept only in this browser on this device. Nothing is sent anywhere except to Plex and your own server.</p>
+      <p class="muted small">Your Plex sign-in is kept only in this browser on this device, and is sent only to Plex and your own server.</p>
+      <div class="report">
+        <a id="report-bug" class="btn" href="https://github.com/claytonkimber/plex-playlists/issues/new" target="_blank" rel="noopener noreferrer">Report a bug</a>
+        <p class="muted small">Opens a public GitHub issue (free account needed). The link gives GitHub your settings, browser type and last error code, never your Plex sign-in, names, addresses or titles. Nothing is posted until you submit.</p>
+      </div>
+      <section class="support" aria-labelledby="support-title">
+        <h3 id="support-title">Support this app</h3>
+        <p class="muted small">Plex Playlists is free and has no ads. If you enjoy it, you can chip in.</p>
+        <a class="btn primary" href="https://www.paypal.com/donate/?hosted_button_id=WKTVYE2X9UX4G" target="_blank" rel="noopener noreferrer">Donate with PayPal or card</a>
+        <details>
+          <summary>Or scan with the PayPal app on another phone</summary>
+          <img class="qr" src="paypal-qr.png" alt="PayPal QR code" width="200" height="200" loading="lazy">
+        </details>
+        <p class="muted small">The button opens PayPal, which has its own terms.</p>
+      </section>
       <div class="actions">
         <button type="button" id="signout" class="btn danger">Sign out</button>
         <button value="close" class="btn">Done</button>

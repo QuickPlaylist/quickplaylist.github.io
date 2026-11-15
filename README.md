@@ -88,6 +88,57 @@ install prompt only work on `localhost`.
 | `sw.js` | Service worker. Loads app files network-first so updates arrive on the next open. Never caches Plex data. |
 | `manifest.webmanifest`, `icons/` | Install metadata and icons (`node tools/make-icons.mjs` regenerates the PNGs) |
 | `auth-done.html` | The page Plex sends you back to after sign-in |
+| `paypal-qr.png` | PayPal donate QR code, shown in **Settings** |
+
+## Report a bug
+
+To report a problem, [file a bug](https://github.com/claytonkimber/plex-playlists/issues/new).
+You need a free GitHub account. These open the same form:
+
+- **Settings → Report a bug**
+- **Trouble signing in? Report a bug** on the sign-in screen
+- **Report a problem** when a video won't play
+
+The app fills in the form with what helps to find the problem. This is the
+complete list:
+
+- the screen you were on
+- whether you are signed in, and whether the account uses Plex Home
+- your two settings (*When I tap a video* and *Video quality*)
+- which kinds of server connection are in use: direct, through Plex's relay,
+  or not connected yet (not how many servers)
+- whether the app is installed and works offline
+- your browser and system with their main version numbers (for example
+  `Chrome 131 on Android 14`), and your screen size and pixel ratio
+- the last loading problem, as a category (for example `HTTP 503`,
+  `network error`, or `some servers unreachable`)
+- the last playback problem: the error number and the browser's error code
+  name (for example `MediaError 3 PIPELINE_ERROR_DECODE`) or Plex's numeric
+  decision code, how the video was playing (direct play or HLS), and the
+  video's file format (for example `mkv / hevc / eac3 / 1080p`)
+
+It never adds your Plex sign-in, your user, profile or server names, server
+addresses or IDs, playlist and video titles, the rest of any error message,
+or your browser's full user-agent text. Signing out or switching profile
+clears the remembered errors.
+
+The details go to GitHub in the link as soon as the form opens. They become
+public only if you submit the issue. You see the whole report first, and you
+can change or remove any part of it.
+
+**CAUTION:** Do not attach screenshots that show your server, playlists or
+account unless you agree that all persons can see them.
+
+## Support
+
+This app is free and has no ads. To support the app, use one of these:
+
+- [Donate with PayPal or card](https://www.paypal.com/donate/?hosted_button_id=WKTVYE2X9UX4G).
+- Scan this QR code with the PayPal app:
+
+<img src="paypal-qr.png" alt="PayPal QR code" width="200">
+
+In the app, **Settings → Support this app** shows the same link and QR code.
 
 ## Privacy
 
@@ -96,5 +147,10 @@ install prompt only work on `localhost`.
   instantly).
 - **Settings → Sign out** clears all of it.
 - No analytics, no third-party scripts, no server of our own.
+- The **Donate** button opens PayPal, which has its own terms. The app sends
+  PayPal nothing.
+- **Report a bug** opens a GitHub form filled in with the details listed under
+  [Report a bug](#report-a-bug). Those details go to GitHub in the link, and
+  nothing is posted until you submit it.
 
 Not affiliated with or endorsed by Plex, Inc. "Plex" is a trademark of Plex, Inc.
