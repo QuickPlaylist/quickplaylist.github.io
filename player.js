@@ -14,6 +14,22 @@
   const TIMELINE_EVERY_MS = 10_000;
   const UP_NEXT_SECONDS = 5;
   const RELAY_BITRATE = 2000; // Plex's relay is slow; keep streams small there.
+  const IDLE_MS = 3000;       // how long the buttons stay after a tap while a video plays
+  const AIRPLAY = 'WebKitPlaybackTargetAvailabilityEvent' in window; // Safari and other WebKit browsers
+  const ICONS = {
+    fullscreen: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+    exitFullscreen: 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5',
+    cast: 'M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6M2 12a8 8 0 0 1 8 8M2 16a4 4 0 0 1 4 4',
+    airplay: 'M7 17H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2M12 15l5 6H7z',
+    repeat: 'M17 3l3 3-3 3M4 11v-1a4 4 0 0 1 4-4h12M7 21l-3-3 3-3M20 13v1a4 4 0 0 1-4 4H4',
+  };
+  // Repeat modes, in the order the button steps through them.
+  const REPEAT = {
+    off: { label: 'Repeat: off', sub: '' },
+    all: { label: 'Repeat: playlist', sub: 'Repeat all' },
+    one: { label: 'Repeat: this video', sub: 'Repeat one' },
+  };
+  const REPEAT_ORDER = ['off', 'all', 'one'];
 
   let s = null;      // current session state
   let ui = null;     // DOM refs
@@ -53,8 +69,14 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
         <div class="p-title"><strong></strong><small></small></div>
+        <button class="icon-btn p-repeat" aria-label="Repeat: off">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS.repeat}"/><text x="12" y="15" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor" stroke="none" hidden>1</text></svg>
+        </button>
+        <button class="icon-btn p-cast" aria-label="Cast to a TV" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS.cast}"/><circle cx="3" cy="20" r="1.3"/></svg>
+        </button>
         <button class="icon-btn p-fs" aria-label="Full screen">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS.fullscreen}"/></svg>
         </button>
       </div>
       <video playsinline controls preload="auto"></video>
@@ -63,35 +85,100 @@
         <div class="p-actions"></div>
       </div>
       <div class="p-bottom">
-        <button class="btn p-prev">‹ Previous</button>
         <button class="btn p-restart" hidden>↺ Start over</button>
-        <button class="btn p-next">Next ›</button>
       </div>`;
     document.body.append(root);
     const q = sel => root.querySelector(sel);
     ui = {
       root, video: q('video'), title: q('.p-title strong'), sub: q('.p-title small'),
       status: q('.p-status'), msg: q('.p-msg'), actions: q('.p-actions'),
-      prev: q('.p-prev'), next: q('.p-next'), restart: q('.p-restart'),
+      restart: q('.p-restart'), cast: q('.p-cast'), fs: q('.p-fs'), repeat: q('.p-repeat'),
     };
     q('.p-close').addEventListener('click', () => close());
-    q('.p-fs').addEventListener('click', toggleFullscreen);
-    document.addEventListener('fullscreenchange', () => {
-      if (!document.fullscreenElement) { try { screen.orientation.unlock(); } catch { /* ignore */ } }
+    ui.repeat.addEventListener('click', () => {
+      if (!s) return;
+      s.repeat = REPEAT_ORDER[(REPEAT_ORDER.indexOf(s.repeat) + 1) % REPEAT_ORDER.length];
+      showRepeat();
+      mediaSession(s.items[s.index]);
+      if (s.onRepeat) s.onRepeat(s.repeat);
     });
-    ui.prev.addEventListener('click', () => go(s.index - 1));
-    ui.next.addEventListener('click', () => go(s.index + 1));
+    ui.fs.addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', () => {
+      const on = !!document.fullscreenElement;
+      ui.fs.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+      ui.fs.querySelector('path').setAttribute('d', on ? ICONS.exitFullscreen : ICONS.fullscreen);
+      if (!on) { try { screen.orientation.unlock(); } catch { /* ignore */ } }
+    });
     ui.restart.addEventListener('click', () => { ui.video.currentTime = 0; ui.restart.hidden = true; ui.video.play().catch(() => {}); });
+    setupCast();
 
     const v = ui.video;
     v.addEventListener('playing', () => { hideStatus(); timeline('playing'); });
-    v.addEventListener('pause', () => { if (!v.ended) timeline('paused'); });
+    v.addEventListener('pause', () => { wake(); if (!v.ended) timeline('paused'); });
+    v.addEventListener('play', wake);
     v.addEventListener('ended', onEnded);
     v.addEventListener('error', () => onMediaError());
     v.addEventListener('timeupdate', () => { if (s && v.currentTime > 30) ui.restart.hidden = true; });
 
+    // The buttons fade while a video plays. A tap, mouse move or key brings them back.
+    root.addEventListener('pointerdown', wake, { capture: true });
+    root.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') wake(); });
+    root.addEventListener('keydown', wake);
+    root.addEventListener('focusin', wake);
+
     window.addEventListener('popstate', () => { if (s && s.pushed) { s.pushed = false; close(); } });
     document.addEventListener('keydown', e => { if (s && e.key === 'Escape' && !document.fullscreenElement) close(); });
+  }
+
+  // ---------- fading buttons ----------
+  let idleTimer = 0;
+  function wake() {
+    if (!ui) return;
+    ui.root.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(rest, IDLE_MS);
+  }
+  function rest() {
+    const v = ui.video;
+    // Stay visible while paused, while a message shows, and while a button has keyboard focus.
+    const busy = !s || v.paused || v.ended || !ui.status.hidden ||
+      ui.root.querySelector('.p-top :focus-visible, .p-bottom :focus-visible');
+    if (!busy) ui.root.classList.add('idle');
+  }
+
+  // ---------- casting ----------
+  // Uses the browser's own picker (Remote Playback API): Chromecast in Chrome,
+  // AirPlay in Safari. The TV then fetches the video from the Plex server itself.
+  // It works only when the video has a plain address, not a hls.js stream, so in
+  // Chrome only videos that play directly can be cast.
+  function setupCast() {
+    const r = ui.video.remote;
+    if (!r || typeof r.watchAvailability !== 'function') return;
+    if (AIRPLAY) {
+      ui.cast.setAttribute('aria-label', 'AirPlay');
+      ui.cast.querySelector('path').setAttribute('d', ICONS.airplay);
+      ui.cast.querySelector('circle').remove();
+    }
+    ui.cast.addEventListener('click', () => {
+      r.prompt().catch(e => {
+        const msg = e && e.name === 'NotSupportedError' ? "This video can't be sent to a TV from this browser."
+          : e && e.name === 'NotFoundError' ? 'No TV found. Check that it is on the same Wi-Fi.' : '';
+        if (msg) showStatus(msg, [['OK', hideStatus]]);
+      });
+    });
+    for (const ev of ['connecting', 'connect', 'disconnect']) {
+      r.addEventListener(ev, () => ui.cast.classList.toggle('on', r.state !== 'disconnected'));
+    }
+    watchCast();
+  }
+  async function watchCast() {
+    const r = ui.video.remote;
+    if (!r || typeof r.watchAvailability !== 'function') return;
+    try { await r.cancelWatchAvailability(); } catch { /* none yet */ }
+    // The button shows only while a TV is found. If the browser can't watch for
+    // TVs, it stays hidden; Chrome's own video controls still offer Cast.
+    try { await r.watchAvailability(found => { ui.cast.hidden = !found; }); }
+    catch { ui.cast.hidden = true; }
   }
 
   // ---------- public ----------
@@ -103,10 +190,13 @@
     // that tap up. The ⛶ button (or the video's own control) goes fullscreen.
     if (s) await teardown();
     s = { ...opts, pushed: false, timer: null, upNext: null };
+    s.repeat = REPEAT_ORDER.includes(opts.repeat) ? opts.repeat : 'off';
+    showRepeat();
     ui.root.hidden = false;
     document.documentElement.classList.add('player-open');
     history.pushState({ ppPlayer: 1 }, '');
     s.pushed = true;
+    wake();
     load(s.index);
   }
 
@@ -135,24 +225,29 @@
   }
 
   // ---------- loading ----------
-  function go(i) {
+  function go(i, opts) {
     if (!s || i < 0 || i >= s.items.length) return;
-    load(i);
+    load(i, opts);
   }
 
-  async function load(i, { forceHls = false, retried = false, keepReloaded = false } = {}) {
+  // The video after this one, going back to the first when repeating the playlist; -1 at the end.
+  function nextIndex() {
+    if (s.index < s.items.length - 1) return s.index + 1;
+    return s.repeat === 'all' ? 0 : -1;
+  }
+
+  async function load(i, { forceHls = false, useHlsJs = false, retried = false, keepReloaded = false, fromStart = false } = {}) {
     await teardown({ keepOpen: true });
     s.index = i;
     s.session = uuid();
     s.forcedHls = forceHls;
+    s.useHlsJs = useHlsJs;
     s.mediaInfo = null;
     s.hlsVia = null;
     if (!keepReloaded) s.reloaded = false;
     const item = s.items[i];
     ui.title.textContent = item.title;
-    ui.sub.textContent = `${s.playlistTitle} · ${i + 1} of ${s.items.length}`;
-    ui.prev.disabled = i === 0;
-    ui.next.disabled = i === s.items.length - 1;
+    showSubtitle();
     ui.restart.hidden = true;
     showStatus('Loading…');
     mediaSession(item);
@@ -163,7 +258,7 @@
       meta = meta.MediaContainer.Metadata[0];
     } catch (e) {
       if (!retried && s.reconnect) {
-        try { s.server = await s.reconnect(); return load(i, { forceHls, retried: true, keepReloaded }); } catch { /* fall through */ }
+        try { s.server = await s.reconnect(); return load(i, { forceHls, useHlsJs, retried: true, keepReloaded, fromStart }); } catch { /* fall through */ }
       }
       return fail("Can't reach your Plex server.", [['Try again', () => load(i)], ['Close', close]]);
     }
@@ -174,8 +269,8 @@
     if (media) s.mediaInfo = describeMedia(media);
     if (!part) return fail('This video has no playable file.', [['Skip', () => go(i + 1)], ['Close', close]]);
 
-    // Resume unless it's (nearly) finished.
-    const offset = meta.viewOffset || 0;
+    // Resume unless it's (nearly) finished, or this is a repeat (Plex may still hold the old position).
+    const offset = fromStart ? 0 : meta.viewOffset || 0;
     s.startAt = offset > 0 && (!s.duration || offset < s.duration * 0.95) ? offset / 1000 : 0;
 
     const bitrate = maxBitrate();
@@ -290,7 +385,11 @@
     }
     const url = serverUrl('/video/:/transcode/universal/start.m3u8', params);
     const v = ui.video;
-    const Hls = await loadHls().catch(() => null);
+    // Safari plays HLS itself, which keeps AirPlay working (hls.js turns it off).
+    // Everywhere else hls.js comes first: Chrome's newer built-in HLS player says
+    // "maybe" but fails on some streams. The browser's own player is the fallback.
+    const native = v.canPlayType('application/vnd.apple.mpegurl') !== '';
+    const Hls = native && AIRPLAY && !s.useHlsJs ? null : await loadHls().catch(() => null);
     if (Hls && Hls.isSupported()) {
       s.hlsVia = 'hls.js';
       const hls = new Hls({ startPosition: s.startAt || -1, enableWorker: true, maxBufferLength: 30 });
@@ -307,7 +406,8 @@
         hls.once(Hls.Events.MANIFEST_PARSED, resolve);
         hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) reject(own('Plex could not start the stream.')); });
       });
-    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      if (v.disableRemotePlayback) ui.cast.hidden = true; // hls.js turned AirPlay off
+    } else if (native) {
       s.hlsVia = 'the browser';
       v.src = url;
       if (s.startAt) v.addEventListener('loadedmetadata', () => { v.currentTime = s.startAt; }, { once: true });
@@ -335,6 +435,8 @@
     if (!s.reloaded) { s.reloaded = true; load(s.index, { forceHls: s.forcedHls, keepReloaded: true }); return; }
     // A direct file the browser still won't play: let Plex convert it.
     if (s.mode === 'direct' && !s.forcedHls) { load(s.index, { forceHls: true, keepReloaded: true }); return; }
+    // The browser's own HLS player failed: try hls.js before giving up.
+    if (s.hlsVia === 'the browser' && !s.useHlsJs) { load(s.index, { forceHls: true, useHlsJs: true, keepReloaded: true }); return; }
     // The report gets the error number and the browser's leading error name (e.g.
     // PIPELINE_ERROR_DECODE), never the rest of its message. Browser error names
     // always contain an underscore, so an all-caps word such as a server name won't match.
@@ -355,20 +457,25 @@
   function onEnded() {
     timeline('stopped');
     scrobble();
-    if (s.index >= s.items.length - 1) {
-      showStatus('That was the last video in the playlist.', [['Play again from the start', () => load(0)], ['Close', close]]);
+    // Repeat this video: straight back to the start, no countdown.
+    if (s.repeat === 'one') { load(s.index, { fromStart: true }); return; }
+    const i = nextIndex();
+    if (i < 0) {
+      showStatus('That was the last video in the playlist.', [['Play again from the start', () => load(0, { fromStart: true })], ['Close', close]]);
       return;
     }
-    const next = s.items[s.index + 1];
+    // Going back to the first video (repeat playlist) starts it from the beginning.
+    const opts = i <= s.index ? { fromStart: true } : undefined;
+    const next = s.items[i];
     let n = UP_NEXT_SECONDS;
     const tick = () => {
       if (!s) return;
-      if (n <= 0) { go(s.index + 1); return; }
+      if (n <= 0) { go(i, opts); return; }
       ui.msg.textContent = `Up next: ${next.title} in ${n}…`;
       n -= 1;
       s.upNext = setTimeout(tick, 1000);
     };
-    showStatus('', [['Play now', () => go(s.index + 1)], ['Cancel', () => { clearTimeout(s.upNext); hideStatus(); }]]);
+    showStatus('', [['Play now', () => go(i, opts)], ['Cancel', () => { clearTimeout(s.upNext); hideStatus(); }]]);
     tick();
   }
 
@@ -382,7 +489,12 @@
       timeline('stopped');
       if (s.duration && v.currentTime * 1000 >= s.duration * 0.9) scrobble();
     }
-    if (s.hls) { s.hls.destroy(); s.hls = null; }
+    if (s.hls) {
+      s.hls.destroy();
+      s.hls = null;
+      // hls.js may have turned AirPlay off for this element; turn it back on for the next video.
+      if (v.disableRemotePlayback) { v.disableRemotePlayback = false; watchCast(); }
+    }
     if (s.mode === 'hls' && s.session) {
       fetch(serverUrl('/video/:/transcode/universal/stop', { session: s.session }), { headers: s.headers }).catch(() => {});
     }
@@ -428,15 +540,28 @@
       return b;
     }));
     ui.status.hidden = false;
+    wake();
   }
-  function hideStatus() { ui.status.hidden = true; }
+  function hideStatus() { ui.status.hidden = true; wake(); }
+
+  function showSubtitle() {
+    const parts = [s.playlistTitle, `${s.index + 1} of ${s.items.length}`, REPEAT[s.repeat].sub];
+    ui.sub.textContent = parts.filter(Boolean).join(' · ');
+  }
+  function showRepeat() {
+    ui.repeat.setAttribute('aria-label', REPEAT[s.repeat].label);
+    ui.repeat.classList.toggle('on', s.repeat !== 'off');
+    ui.repeat.querySelector('text').toggleAttribute('hidden', s.repeat !== 'one');
+    if (s.items && s.index != null) showSubtitle();
+  }
 
   function mediaSession(item) {
     if (!('mediaSession' in navigator)) return;
     try {
       navigator.mediaSession.metadata = new MediaMetadata({ title: item.title, album: s.playlistTitle });
       navigator.mediaSession.setActionHandler('previoustrack', s.index > 0 ? () => go(s.index - 1) : null);
-      navigator.mediaSession.setActionHandler('nexttrack', s.index < s.items.length - 1 ? () => go(s.index + 1) : null);
+      const i = nextIndex();
+      navigator.mediaSession.setActionHandler('nexttrack', i >= 0 ? () => go(i, i <= s.index ? { fromStart: true } : undefined) : null);
     } catch { /* ignore */ }
   }
 

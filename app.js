@@ -554,6 +554,8 @@ function renderItems(serverId, playlistId, data) {
   const play = i => window.Player.open({
     server, items: data.items, index: i, playlistTitle: data.title,
     quality: store.get('quality', 'auto'),
+    repeat: store.get('repeat', 'off'),
+    onRepeat: mode => store.set('repeat', mode),
     headers: plexHeaders(server && server.token),
     reconnect: async () => { server.uri = null; await connect(server); return server; },
     report: () => window.open(bugUrl(), '_blank', 'noopener,noreferrer'),
@@ -584,7 +586,7 @@ function renderItems(serverId, playlistId, data) {
 }
 
 // ---------- settings ----------
-const DEVICE_PREFS = ['clientId', 'tapMode', 'quality'];
+const DEVICE_PREFS = ['clientId', 'tapMode', 'quality', 'repeat'];
 function signOut() {
   const keep = Object.fromEntries(DEVICE_PREFS.map(k => [k, store.get(k)]));
   store.clearAll();
@@ -672,6 +674,10 @@ function viewName() {
   return store.get('accountToken') ? 'loading' : 'sign-in';
 }
 
+// Fixed wording for the stored repeat mode; anything unexpected is 'unknown'.
+const REPEAT_LABELS = { off: 'off', all: 'playlist', one: 'this video' };
+const repeatLabel = v => (Object.keys(REPEAT_LABELS).includes(v) ? REPEAT_LABELS[v] : 'unknown');
+
 function bugUrl() {
   // The option's own label, from the page, never the stored value itself.
   const label = (sel, value) => { const o = [...$(sel).options].find(x => x.value === value); return o ? o.textContent : 'unknown'; };
@@ -690,7 +696,8 @@ function bugUrl() {
     `Screen: ${viewName()}`,
     `Signed in: ${store.get('accountToken') ? 'yes' : 'no'}${profile.of > 1 ? ' (Plex Home)' : ''}`,
     `Server connections: ${kinds.length ? kinds.join(', ') : 'no server found'}`,
-    `When I tap a video: ${label('#link-mode', linkMode())} · Video quality: ${label('#quality', store.get('quality', 'auto'))}`,
+    `When I tap a video: ${label('#link-mode', linkMode())} · Video quality: ${label('#quality', store.get('quality', 'auto'))}` +
+      ` · Repeat: ${repeatLabel(store.get('repeat', 'off'))}`,
     `Installed as an app: ${installed ? 'yes' : 'no'} · Works offline: ${navigator.serviceWorker && navigator.serviceWorker.controller ? 'yes' : 'no'}`,
     `Browser: ${browserSummary()}`,
     `Screen size: ${n(screen.width)}×${n(screen.height)} @${n(devicePixelRatio)}x`,

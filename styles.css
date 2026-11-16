@@ -161,12 +161,18 @@ html.player-open, html.player-open body { overflow: hidden; }
 .player .p-bottom { justify-content: center; flex-wrap: wrap; padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
 .player .icon-btn { color: #fff; }
 .player .icon-btn:active { background: rgb(255 255 255 / .15); }
+.player .p-cast.on, .player .p-repeat.on { color: var(--accent); }
+.player .p-repeat:not(.on) { opacity: .6; }
+/* While a video plays the buttons fade; a tap brings them back (player.js). */
+.player .p-top, .player .p-bottom { transition: opacity .25s ease; }
+.player.idle .p-top, .player.idle .p-bottom { opacity: 0; pointer-events: none; }
+.player.idle { cursor: none; }
+@media (prefers-reduced-motion: reduce) { .player .p-top, .player .p-bottom { transition: none; } }
 .player .p-title { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .player .p-title strong, .player .p-title small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player .p-title small { color: #b9bec7; }
 .player .btn { background: rgb(255 255 255 / .14); color: #fff; min-height: 40px; padding: 0 14px; font-size: .95rem; }
 .player .btn.primary { background: var(--accent); color: #1a1406; }
-.player .btn:disabled { opacity: .35; }
 .player .p-status {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: min(420px, calc(100% - 32px)); background: rgb(20 22 26 / .92); border-radius: var(--radius);
