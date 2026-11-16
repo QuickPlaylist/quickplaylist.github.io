@@ -74,12 +74,9 @@ straight from your Plex server.
   phone's own screen casting, for example *Screen cast* on a Pixel or
   *Smart View* on a Samsung.
 
-### Opening the Plex app instead
-
-**Settings → When I tap a video** can also open the Plex app, through
-`plex://play/?metadataKey=…&server=…`, or Plex Web. Plex has never documented
-the app link. If the Plex app shows *Who's watching?*, it drops the link, which
-is why *Play it here* is the default.
+Videos always play in this app. It has no option to open the Plex app or
+Plex Web: when Plex shows its *Who's watching?* screen, it drops the video
+the app asked for.
 
 ## Requirements and limits
 
@@ -132,7 +129,7 @@ complete list:
 
 - the screen you were on
 - whether you are signed in, and whether the account uses Plex Home
-- your settings (*When I tap a video*, *Video quality* and *Repeat*)
+- your settings (*Video quality* and *Repeat*)
 - which kinds of server connection are in use: direct, through Plex's relay,
   or not connected yet (not how many servers)
 - whether the app is installed and works offline

@@ -1,6 +1,6 @@
 /*
  * Plex Playlists — a static PWA that lists the video playlists on your Plex
- * server(s) and opens them in the Plex app.
+ * server(s) and plays them in its own player (player.js).
  *
  * Privacy model: there are no credentials in this code. Each person signs in
  * with Plex's own PIN flow; the resulting token is stored only in this
@@ -350,28 +350,11 @@ async function loadItems(serverId, playlistId) {
   };
 }
 
-// ---------- links ----------
-function plexAppLink(serverId, metadataKey) {
-  return `plex://play/?metadataKey=${encodeURIComponent(metadataKey)}&server=${encodeURIComponent(serverId)}`;
-}
-function plexWebLink(serverId, metadataKey) {
-  const isPlaylist = metadataKey.startsWith('/playlists/');
-  const page = isPlaylist ? 'playlist' : 'details';
-  return `https://app.plex.tv/desktop/#!/server/${encodeURIComponent(serverId)}/${page}?key=${encodeURIComponent(metadataKey)}`;
-}
-// 'here' = play in this app's own player (default; avoids the Plex app's
-// profile picker), 'app' = Plex app deep link, 'web' = Plex Web.
-function linkMode() { return store.get('tapMode', 'here'); }
-function openLink(serverId, key) {
-  return linkMode() === 'web' ? plexWebLink(serverId, key) : plexAppLink(serverId, key);
-}
-
-// Build a tappable row/button: plays in-app, or links out to Plex.
-function playLink(attrs, serverId, plexKey, onPlay, ...kids) {
-  if (linkMode() === 'here') {
-    return el('a', { ...attrs, href: '#', role: 'button', onclick: e => { e.preventDefault(); onPlay(); } }, ...kids);
-  }
-  return el('a', { ...attrs, href: openLink(serverId, plexKey) }, ...kids);
+// ---------- play buttons ----------
+// Videos always play in this app's own player. Links into the Plex app or Plex
+// Web were dropped: Plex's "Who's watching?" screen kept swallowing them.
+function playLink(attrs, onPlay, ...kids) {
+  return el('a', { ...attrs, href: '#', role: 'button', onclick: e => { e.preventDefault(); onPlay(); } }, ...kids);
 }
 
 function imageUrl(server, path, w, h) {
@@ -549,7 +532,6 @@ function renderItems(serverId, playlistId, data) {
   const server = (store.get('servers') || []).find(s => s.id === serverId);
   setBar({ title: data.title, back: true, refresh: true, menu: true });
   const total = data.items.reduce((a, i) => a + i.duration, 0);
-  const listKey = `/playlists/${playlistId}`;
   const cachedList = (store.get('playlists') || { playlists: [] }).playlists.find(p => p.server === serverId && p.id === playlistId);
   const play = i => window.Player.open({
     server, items: data.items, index: i, playlistTitle: data.title,
@@ -561,18 +543,17 @@ function renderItems(serverId, playlistId, data) {
     report: () => window.open(bugUrl(), '_blank', 'noopener,noreferrer'),
     onClose: () => showPlaylist(serverId, playlistId), // pick up new watch progress
   });
-  const inApp = linkMode() === 'here';
   main.replaceChildren(
     el('section', { class: 'hero' },
       el('div', { class: 'art', style: bg(imageUrl(server, cachedList && cachedList.art, 300, 300)), 'aria-hidden': 'true' }),
       el('div', {},
         el('p', { class: 'meta' }, `${data.items.length} video${data.items.length === 1 ? '' : 's'}${total ? ' · ' + fmtDuration(total) : ''}`),
-        data.items.length ? playLink({ class: 'btn primary' }, serverId, listKey, () => play(0), inApp ? '▶ Play all' : '▶ Play all in Plex') : null,
+        data.items.length ? playLink({ class: 'btn primary' }, () => play(0), '▶ Play all') : null,
       ),
     ),
     data.items.length
       ? el('ol', { class: 'list' }, data.items.map((it, i) => el('li', {},
-        playLink({ class: 'item' }, serverId, it.key, () => play(i),
+        playLink({ class: 'item' }, () => play(i),
           el('span', { class: 'num', 'aria-hidden': 'true' }, it.watched ? '✓' : String(i + 1)),
           el('div', { class: 'thumb' + (it.poster ? ' poster' : ''), style: bg(imageUrl(server, it.thumb, it.poster ? 120 : 240, it.poster ? 180 : 135)), 'aria-hidden': 'true' }),
           el('div', { class: 'text' },
@@ -586,7 +567,7 @@ function renderItems(serverId, playlistId, data) {
 }
 
 // ---------- settings ----------
-const DEVICE_PREFS = ['clientId', 'tapMode', 'quality', 'repeat'];
+const DEVICE_PREFS = ['clientId', 'quality', 'repeat'];
 function signOut() {
   const keep = Object.fromEntries(DEVICE_PREFS.map(k => [k, store.get(k)]));
   store.clearAll();
@@ -601,9 +582,7 @@ function signOut() {
 
 async function openSettings() {
   const d = $('#settings');
-  $('#link-mode').value = linkMode();
   $('#quality').value = store.get('quality', 'auto');
-  $('#quality-row').hidden = linkMode() !== 'here';
   const profile = store.get('profile') || {};
   $('#profile-row').hidden = !(profile.of > 1);
   $('#profile-name').textContent = profile.title || '';
@@ -696,8 +675,7 @@ function bugUrl() {
     `Screen: ${viewName()}`,
     `Signed in: ${store.get('accountToken') ? 'yes' : 'no'}${profile.of > 1 ? ' (Plex Home)' : ''}`,
     `Server connections: ${kinds.length ? kinds.join(', ') : 'no server found'}`,
-    `When I tap a video: ${label('#link-mode', linkMode())} · Video quality: ${label('#quality', store.get('quality', 'auto'))}` +
-      ` · Repeat: ${repeatLabel(store.get('repeat', 'off'))}`,
+    `Video quality: ${label('#quality', store.get('quality', 'auto'))} · Repeat: ${repeatLabel(store.get('repeat', 'off'))}`,
     `Installed as an app: ${installed ? 'yes' : 'no'} · Works offline: ${navigator.serviceWorker && navigator.serviceWorker.controller ? 'yes' : 'no'}`,
     `Browser: ${browserSummary()}`,
     `Screen size: ${n(screen.width)}×${n(screen.height)} @${n(devicePixelRatio)}x`,
@@ -722,6 +700,7 @@ function route() {
     store.set('accountToken', store.get('token'));
     store.del('token');
   }
+  store.del('tapMode'); // the old "When I tap a video" setting; videos always play here now
   const pending = store.get('pendingPin');
   if (!store.get('accountToken')) {
     if (pending && Date.now() - pending.at < 10 * 60_000) { renderWaitingForSignIn(); finishSignIn(pending.id); }
@@ -754,11 +733,6 @@ $('#refresh').addEventListener('click', () => {
 $('#menu').addEventListener('click', openSettings);
 $('#report-bug').addEventListener('click', e => { e.currentTarget.href = bugUrl(); });
 $('#signout').addEventListener('click', signOut);
-$('#link-mode').addEventListener('change', e => {
-  store.set('tapMode', e.target.value);
-  $('#quality-row').hidden = e.target.value !== 'here';
-  route();
-});
 $('#quality').addEventListener('change', e => store.set('quality', e.target.value));
 $('#switch-profile').addEventListener('click', () => {
   $('#settings').close();
