@@ -1,5 +1,5 @@
 /*
- * Plex Playlists — a static PWA that lists the video playlists on your Plex
+ * QuickPlaylist for Plex — a static PWA that lists the video playlists on your Plex
  * server(s) and plays them in its own player (player.js).
  *
  * Privacy model: there are no credentials in this code. Each person signs in
@@ -13,12 +13,12 @@
 // Don't run inside another site's frame, where a page could trick taps (GitHub
 // Pages can't send the frame-ancestors header that would block this).
 if (window.top !== window.self) {
-  const a = Object.assign(document.createElement('a'), { href: location.href, target: '_blank', rel: 'noopener', textContent: 'Open Plex Playlists in its own tab' });
+  const a = Object.assign(document.createElement('a'), { href: location.href, target: '_blank', rel: 'noopener', textContent: 'Open QuickPlaylist in its own tab' });
   document.body.replaceChildren(a);
-  throw new Error('Plex Playlists does not run inside a frame.');
+  throw new Error('QuickPlaylist does not run inside a frame.');
 }
 
-const PRODUCT = 'Plex Playlists';
+const PRODUCT = 'QuickPlaylist';
 const PLEX_TV = 'https://plex.tv';
 const CLIENTS = 'https://clients.plex.tv';
 const PROBE_TIMEOUT_MS = 5000;
@@ -433,7 +433,7 @@ function fmtDuration(ms) {
 
 function setBar({ title, back = false, refresh = false, menu = false }) {
   $('#title').textContent = title;
-  document.title = title === 'Playlists' ? PRODUCT : `${title} · ${PRODUCT}`;
+  document.title = title === 'Playlists' || title === PRODUCT ? PRODUCT : `${title} · ${PRODUCT}`;
   $('#back').hidden = !back;
   $('#refresh').hidden = !refresh;
   $('#menu').hidden = !menu;
@@ -455,7 +455,7 @@ function describeError(e) {
 
 // ---------- views ----------
 function renderSignIn() {
-  setBar({ title: 'Playlists' });
+  setBar({ title: 'QuickPlaylist' });
   main.replaceChildren(el('section', { class: 'empty' },
     el('h2', {}, 'Your Plex playlists, one tap away'),
     el('p', {}, 'Sign in with your Plex account. Your sign-in stays on this device and is sent only to Plex and your own Plex servers.'),
@@ -645,7 +645,7 @@ async function openSettings() {
 // picked from a fixed list. Nothing is copied from Plex, from stored data, from
 // error messages or from the browser's user-agent text (all can carry names,
 // addresses, tokens or device details).
-const ISSUES = 'https://github.com/claytonkimber/plex-playlists/issues/new';
+const ISSUES = 'https://github.com/quickplaylist/quickplaylist.github.io/issues/new';
 let lastProblem = null;
 
 // `where` is always fixed wording from this file; `e` becomes a category.

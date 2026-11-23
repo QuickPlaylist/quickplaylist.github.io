@@ -1,8 +1,12 @@
-# Plex Playlists
+# QuickPlaylist for Plex
 
-A tiny installable web app (PWA) that shows the video playlists on your Plex
-server. Tap a playlist to see its videos. Tap a video, or **Play all**, to
-play it right there, streamed straight from your server.
+**https://quickplaylist.github.io/**
+
+QuickPlaylist is a tiny installable web app (PWA) that shows the video
+playlists on your Plex server. Tap a playlist to see its videos. Tap a video,
+or **Play all**, to play it right there, streamed straight from your server.
+
+QuickPlaylist is not made by Plex and is not affiliated with Plex, Inc.
 
 - **Always current.** Playlists load live from your server each time you open
   the app or switch back to it, and every minute while it is open. New
@@ -24,7 +28,7 @@ play it right there, streamed straight from your server.
 
 ## Install on your phone
 
-1. Open the app's address in your phone's browser.
+1. Open <https://quickplaylist.github.io/> in your phone's browser.
 2. Tap **Sign in with Plex** and sign in on the Plex page that opens.
 3. Add it to your home screen:
    - **Android (Chrome):** menu ⋮ → *Add to Home screen* / *Install app*.
@@ -94,8 +98,13 @@ the app asked for.
 ## Hosting your own copy
 
 Any static host works. For GitHub Pages: *Settings → Pages → Deploy from a
-branch → `main` / root*. The app uses relative paths, so it works from a
-sub-path like `https://<user>.github.io/plex-playlists/`.
+branch → `main` / root*. The app uses relative paths, so it works at the
+root of a site or from a sub-path like `https://<user>.github.io/<repo>/`.
+
+Give your copy its own web address if you can (its own domain, or a GitHub
+account or organization that hosts nothing else). All sites on one address
+share the browser's storage, so another site on the same address could read
+the Plex sign-in.
 
 To run it locally:
 
@@ -120,7 +129,7 @@ install prompt only work on `localhost`.
 
 ## Report a bug
 
-To report a problem, [file a bug](https://github.com/claytonkimber/plex-playlists/issues/new).
+To report a problem, [file a bug](https://github.com/quickplaylist/quickplaylist.github.io/issues/new).
 You need a free GitHub account. These open the same form:
 
 - **Settings → Report a bug**
@@ -181,7 +190,7 @@ In the app, **Settings → Support this app** shows the same link and QR code.
   this browser. It keeps the device ID and your *Video quality* and *Repeat*
   settings.
 - Sign out doesn't cancel the sign-in at Plex. To cut the app off
-  completely, remove *Plex Playlists* under **Authorized Devices** in your
+  completely, remove *QuickPlaylist* under **Authorized Devices** in your
   Plex account settings.
 - No analytics, no third-party scripts, no server of our own. The app's files
   are hosted on GitHub Pages, so GitHub sees requests for them, as any web
