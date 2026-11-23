@@ -10,7 +10,9 @@ play it right there, streamed straight from your server.
 - **No shared logins.** The code has no credentials in it. Each person signs in
   with their own Plex account through Plex's sign-in page. The token is kept
   only in that browser on that device, and is sent only to plex.tv and to that
-  person's own Plex servers. Anyone can use the same copy of the app safely.
+  person's own Plex servers. A server that someone else shares with you gets
+  only the separate access key Plex issued for it. Anyone can use the same
+  copy of the app safely.
 - **Plays in the app.** It streams from your server, so the Plex app and its
   *Who's watching?* screen never appear. It picks up where you left off, plays
   the rest of the playlist in order, and reports progress to Plex, so watched
@@ -65,7 +67,8 @@ button that goes straight to it.
 
 The cast button (or the AirPlay button in Safari) appears at the top of the
 player when a TV is found on the same Wi-Fi. The TV then plays the video
-straight from your Plex server.
+straight from your Plex server. To do that, the TV gets the video's address,
+which includes that server's access key.
 
 - **Safari (iPhone, iPad, Mac):** AirPlay works for all videos.
 - **Chrome (Android or computer):** Chromecast and Google TV work only for
@@ -80,9 +83,9 @@ the app asked for.
 
 ## Requirements and limits
 
-- The app talks to your Plex server from the browser over HTTPS, using the
-  secure `*.plex.direct` addresses that Plex provides. At home it uses the
-  local address. Away from home it needs **Remote Access** turned on in Plex,
+- The app talks to your Plex server from the browser over HTTPS only, using
+  the addresses Plex lists for the server (normally its secure
+  `*.plex.direct` addresses). At home it uses the local address. Away from home it needs **Remote Access** turned on in Plex,
   or it falls back to Plex's relay.
 - It shows video playlists only, not music or photo playlists.
 - If your account can see more than one server, the playlists are grouped by
@@ -168,10 +171,21 @@ In the app, **Settings → Support this app** shows the same link and QR code.
 ## Privacy
 
 - Stored in your browser: your Plex sign-in, the profile you picked, a random
-  device ID, your settings, and the last playlist list (so the app opens
-  instantly).
-- **Settings → Sign out** clears all of it.
-- No analytics, no third-party scripts, no server of our own.
+  device ID, your settings, and the last playlist lists (so the app opens
+  instantly). Your browser may also keep pictures and videos from your server
+  in its normal cache.
+- Your sign-in is sent only to plex.tv and to your own Plex servers. A server
+  someone shares with you gets only the separate access key Plex issued for
+  it. When you cast, the TV gets the video's address with that key in it.
+- **Settings → Sign out** removes your sign-in, profile and saved lists from
+  this browser. It keeps the device ID and your *Video quality* and *Repeat*
+  settings.
+- Sign out doesn't cancel the sign-in at Plex. To cut the app off
+  completely, remove *Plex Playlists* under **Authorized Devices** in your
+  Plex account settings.
+- No analytics, no third-party scripts, no server of our own. The app's files
+  are hosted on GitHub Pages, so GitHub sees requests for them, as any web
+  host would.
 - The **Donate** button opens PayPal, which has its own terms. The app sends
   PayPal nothing.
 - **Report a bug** opens a GitHub form filled in with the details listed under

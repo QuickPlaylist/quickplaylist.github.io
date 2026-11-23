@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https: http:; connect-src 'self' https: http:; media-src 'self' blob: https: http:; manifest-src 'self'; worker-src 'self' blob:; base-uri 'none'; form-action 'none'">
+        content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self' https:; media-src 'self' blob: https:; manifest-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#14161a">
   <meta name="description" content="Your Plex video playlists, one tap away.">
@@ -54,7 +54,8 @@
           <option value="2000">2 Mbps · 720p (mobile data)</option>
         </select>
       </label>
-      <p class="muted small">Your Plex sign-in is kept only in this browser on this device, and is sent only to Plex and your own server.</p>
+      <p class="muted small">Your Plex sign-in is kept only in this browser on this device, and is sent only to Plex and your own servers. A server someone shares with you gets only the separate key Plex made for it.</p>
+      <p class="muted small">Sign out removes your sign-in from this browser. To cut the app off completely, remove “Plex Playlists” under <a class="text-link" href="https://app.plex.tv/desktop/#!/settings/devices/all" target="_blank" rel="noopener noreferrer">Authorized Devices</a> in your Plex account.</p>
       <div class="report">
         <a id="report-bug" class="btn" href="https://github.com/claytonkimber/plex-playlists/issues/new" target="_blank" rel="noopener noreferrer">Report a bug</a>
         <p class="muted small">Opens a public GitHub issue (free account needed). The link gives GitHub your settings, browser type and last error code, never your Plex sign-in, names, addresses or titles. Nothing is posted until you submit.</p>

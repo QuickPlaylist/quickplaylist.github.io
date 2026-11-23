@@ -5,9 +5,18 @@
  * Privacy model: there are no credentials in this code. Each person signs in
  * with Plex's own PIN flow; the resulting token is stored only in this
  * browser's localStorage and is only ever sent to plex.tv and to the person's
- * own Plex servers.
+ * own Plex servers. A server someone shares with them gets only the separate
+ * access token plex.tv issued for that server.
  */
 'use strict';
+
+// Don't run inside another site's frame, where a page could trick taps (GitHub
+// Pages can't send the frame-ancestors header that would block this).
+if (window.top !== window.self) {
+  const a = Object.assign(document.createElement('a'), { href: location.href, target: '_blank', rel: 'noopener', textContent: 'Open Plex Playlists in its own tab' });
+  document.body.replaceChildren(a);
+  throw new Error('Plex Playlists does not run inside a frame.');
+}
 
 const PRODUCT = 'Plex Playlists';
 const PLEX_TV = 'https://plex.tv';
@@ -77,8 +86,8 @@ function authUrl(pin, forwardUrl) {
   return `https://app.plex.tv/auth#?${p.toString()}`;
 }
 
-async function pollPin(id, { until = Date.now() + 10 * 60_000 } = {}) {
-  while (Date.now() < until) {
+async function pollPin(id, { until = Date.now() + 10 * 60_000, cancelled = () => false } = {}) {
+  while (Date.now() < until && !cancelled()) {
     try {
       const pin = await fetchJSON(`${PLEX_TV}/api/v2/pins/${encodeURIComponent(id)}`);
       if (pin.authToken) return pin.authToken;
@@ -94,6 +103,8 @@ async function pollPin(id, { until = Date.now() + 10 * 60_000 } = {}) {
 async function signIn() {
   // Open the window synchronously (inside the tap) so popup blockers allow it.
   const win = window.open('', '_blank');
+  // The sign-in page doesn't need a handle back to this tab.
+  if (win) { try { win.opener = null; } catch { /* ignore */ } }
   let pin;
   try { pin = await createPin(); }
   catch (e) { if (win) win.close(); noteProblem('starting sign-in', e); showError('Could not reach plex.tv. Check your connection and try again.'); return; }
@@ -109,12 +120,20 @@ async function signIn() {
   }
 }
 
-let polling = null;
-async function finishSignIn(pinId) {
-  if (polling === pinId) return;
-  polling = pinId;
-  const token = await pollPin(pinId);
+function cancelSignIn() {
+  if (polling) polling.cancelled = true;
   polling = null;
+  store.del('pendingPin');
+}
+
+let polling = null; // { id, cancelled } while waiting for the Plex sign-in page
+async function finishSignIn(pinId) {
+  if (polling && polling.id === pinId) return;
+  const job = polling = { id: pinId, cancelled: false };
+  const token = await pollPin(pinId, { cancelled: () => job.cancelled });
+  if (polling === job) polling = null;
+  // Cancelled (or signed out) while waiting: a sign-in finished later is ignored.
+  if (job.cancelled) return;
   store.del('pendingPin');
   if (!token) { route(); return; }
   store.set('accountToken', token);
@@ -232,16 +251,21 @@ async function discoverServers(token) {
       id: r.clientIdentifier,
       name: r.name,
       owned: !!r.owned,
-      token: r.accessToken || token,
+      // Each server gets the access key Plex issued for it. Only your own servers
+      // may fall back to your sign-in; a shared server without its own key is skipped.
+      token: r.accessToken || (r.owned ? token : null),
       connections: (r.connections || [])
         .filter(c => !pageIsHttps || c.uri.startsWith('https://')) // https page can't call http servers
         .sort((a, b) => rank(a) - rank(b))
         .map(c => ({ uri: c.uri, relay: !!c.relay })),
     }))
-    .filter(s => s.connections.length);
+    .filter(s => s.token && s.connections.length);
   // Owned servers first.
   servers.sort((a, b) => Number(b.owned) - Number(a.owned) || a.name.localeCompare(b.name));
-  return servers;
+  // One entry per server id, keeping your own: two entries with the same id could
+  // otherwise swap addresses, and your token could go to someone else's address.
+  const seen = new Set();
+  return servers.filter(s => !seen.has(s.id) && seen.add(s.id));
 
   function rank(c) { return (c.relay ? 20 : 0) + (c.local ? 0 : 10) + (c.IPv6 ? 1 : 0); }
 }
@@ -253,7 +277,8 @@ async function probe(uri, token) {
 
 // Find a reachable address: try all direct ones at once, relays only if none answer.
 async function pickConnection(server) {
-  if (server.uri) {
+  // Reuse the last address only if it is one Plex listed for this server.
+  if (server.uri && server.connections.some(c => c.uri === server.uri)) {
     try { return await probe(server.uri, server.token); } catch { /* re-pick */ }
   }
   const direct = server.connections.filter(c => !c.relay);
@@ -276,16 +301,22 @@ async function getServers({ force = false } = {}) {
 }
 
 async function serverRequest(server, path) {
-  let uri = server.uri;
-  if (!uri) uri = await connect(server);
   try {
-    return await fetchJSON(uri + path, { token: server.token });
+    let uri = server.uri && server.connections.some(c => c.uri === server.uri) ? server.uri : await connect(server);
+    try {
+      return await fetchJSON(uri + path, { token: server.token });
+    } catch (e) {
+      if (e.status === 401) throw e;
+      // Address may have changed (e.g. left home Wi-Fi). Re-pick once.
+      server.uri = null;
+      uri = await connect(server);
+      return await fetchJSON(uri + path, { token: server.token });
+    }
   } catch (e) {
-    if (e.status === 401) throw e;
-    // Address may have changed (e.g. left home Wi-Fi). Re-pick once.
-    server.uri = null;
-    uri = await connect(server);
-    return fetchJSON(uri + path, { token: server.token });
+    // A 401 from someone else's server means that share is gone, not that your
+    // sign-in expired: don't sign out over it.
+    if (e && e.status === 401 && !server.owned) e.shared = true;
+    throw e;
   }
 }
 
@@ -295,7 +326,7 @@ async function connect(server) {
   server.uri = uri;
   server.relay = !!(server.connections.find(c => c.uri === uri) || {}).relay;
   const all = store.get('servers') || [];
-  const s = all.find(x => x.id === server.id);
+  const s = all.find(x => x.id === server.id && x.token === server.token);
   if (s) { s.uri = uri; s.relay = server.relay; store.set('servers', all); }
   return uri;
 }
@@ -321,7 +352,8 @@ async function loadPlaylists({ force = false } = {}) {
   const playlists = [];
   const errors = [];
   results.forEach((r, i) => r.status === 'fulfilled' ? playlists.push(...r.value) : errors.push({ server: servers[i].name, err: r.reason }));
-  if (errors.some(e => e.err && e.err.status === 401) && !playlists.length) throw Object.assign(new Error('auth'), { status: 401 });
+  // Sign out only when one of your own servers rejects the sign-in.
+  if (errors.some(e => e.err && e.err.status === 401 && !e.err.shared) && !playlists.length) throw Object.assign(new Error('auth'), { status: 401 });
   return { servers, playlists, errors };
 }
 
@@ -381,7 +413,16 @@ function el(tag, props = {}, ...kids) {
   for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return n;
 }
-function bg(url) { return url ? `background-image:url("${url.replace(/"/g, '%22')}")` : null; }
+// Image addresses can come from a server someone shared with you. Allow only
+// http(s) addresses. The URL parser drops line breaks; then percent-encode
+// anything else that could end the CSS string (a quote or backslash), so the
+// server can't add styles of its own (for example a fake full-screen notice).
+function bg(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  return `background-image:url("${u.href.replace(/["\\\n\r\f]/g, c => encodeURIComponent(c))}")`;
+}
 
 function fmtDuration(ms) {
   const m = Math.round(ms / 60000);
@@ -407,6 +448,7 @@ function showError(msg) {
 
 function describeError(e) {
   if (e && e.unreachable) return `Can't reach "${e.unreachable}". Is the server on? If you're away from home, make sure Remote Access is enabled in Plex.`;
+  if (e && e.shared) return "This server turned the request down. Its owner may have stopped sharing it with you.";
   if (e && e.status === 401) return 'Plex says your sign-in has expired. Please sign in again.';
   return 'Could not load from Plex. Pull to refresh or tap ↻ to try again.';
 }
@@ -416,7 +458,7 @@ function renderSignIn() {
   setBar({ title: 'Playlists' });
   main.replaceChildren(el('section', { class: 'empty' },
     el('h2', {}, 'Your Plex playlists, one tap away'),
-    el('p', {}, 'Sign in with your Plex account. Your sign-in stays on this device — it is never sent to anyone but Plex and your own server.'),
+    el('p', {}, 'Sign in with your Plex account. Your sign-in stays on this device and is sent only to Plex and your own Plex servers.'),
     el('button', { class: 'btn primary big', onclick: signIn }, 'Sign in with Plex'),
     el('p', { class: 'after small' }, bugLink('Trouble signing in? Report a bug')),
   ));
@@ -427,7 +469,7 @@ function renderWaitingForSignIn() {
   main.replaceChildren(el('section', { class: 'empty' },
     el('h2', {}, 'Finish signing in'),
     el('p', {}, 'Sign in on the Plex page that just opened. When it says you can close it, come back here.'),
-    el('button', { class: 'btn', onclick: () => { store.del('pendingPin'); renderSignIn(); } }, 'Cancel'),
+    el('button', { class: 'btn', onclick: () => { cancelSignIn(); renderSignIn(); } }, 'Cancel'),
   ));
 }
 
@@ -522,7 +564,7 @@ async function showPlaylist(serverId, playlistId) {
     store.set(cacheKey, data);
     if (main.dataset.view === view && JSON.stringify(data) !== JSON.stringify(cached)) renderItems(serverId, playlistId, data);
   } catch (e) {
-    if (e.status === 401) { signOut(); return; }
+    if (e.status === 401 && !e.shared) { signOut(); return; }
     noteProblem('loading a playlist', e);
     if (main.dataset.view === view) showError(describeError(e));
   } finally { setSpinning(false); }
@@ -569,6 +611,7 @@ function renderItems(serverId, playlistId, data) {
 // ---------- settings ----------
 const DEVICE_PREFS = ['clientId', 'quality', 'repeat'];
 function signOut() {
+  cancelSignIn();
   const keep = Object.fromEntries(DEVICE_PREFS.map(k => [k, store.get(k)]));
   store.clearAll();
   for (const [k, v] of Object.entries(keep)) if (v != null) store.set(k, v);
@@ -711,9 +754,18 @@ function route() {
     if (main.dataset.view !== 'profiles') chooseProfile();
     return;
   }
-  const m = location.hash.match(/^#\/p\/([^/]+)\/([^/]+)$/);
-  if (m) showPlaylist(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  const r = playlistRoute();
+  if (r) showPlaylist(r.serverId, r.playlistId);
   else showHome();
+}
+
+// "#/p/<server>/<playlist>" as two ids, or null for any other link, including a
+// malformed one (a bad % escape would otherwise stop the app).
+function playlistRoute() {
+  const m = location.hash.match(/^#\/p\/([^/]+)\/([^/]+)$/);
+  if (!m) return null;
+  try { return { serverId: decodeURIComponent(m[1]), playlistId: decodeURIComponent(m[2]) }; }
+  catch { return null; }
 }
 
 // Back returns to the list. If we got here from the list, pop history so the
@@ -726,8 +778,8 @@ $('#back').addEventListener('click', () => {
   else location.replace(location.href.split('#')[0] + '#');
 });
 $('#refresh').addEventListener('click', () => {
-  const m = location.hash.match(/^#\/p\/([^/]+)\/([^/]+)$/);
-  if (m) showPlaylist(decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  const r = playlistRoute();
+  if (r) showPlaylist(r.serverId, r.playlistId);
   else refreshHome({ force: true });
 });
 $('#menu').addEventListener('click', openSettings);

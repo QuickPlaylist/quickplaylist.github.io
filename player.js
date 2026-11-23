@@ -236,8 +236,16 @@
     return s.repeat === 'all' ? 0 : -1;
   }
 
+  // Each load gets a number. After every wait it checks it is still the newest
+  // load and the player is still open, so a slow answer for an older video (or
+  // one that arrives after Close) can't start the wrong video.
+  let loads = 0;
+  const stale = ticket => ticket !== loads || !s;
+
   async function load(i, { forceHls = false, useHlsJs = false, retried = false, keepReloaded = false, fromStart = false } = {}) {
+    const ticket = ++loads;
     await teardown({ keepOpen: true });
+    if (stale(ticket)) return;
     s.index = i;
     s.session = uuid();
     s.forcedHls = forceHls;
@@ -257,11 +265,19 @@
       meta = await api(`/library/metadata/${encodeURIComponent(item.ratingKey)}`);
       meta = meta.MediaContainer.Metadata[0];
     } catch (e) {
+      if (stale(ticket)) return;
       if (!retried && s.reconnect) {
-        try { s.server = await s.reconnect(); return load(i, { forceHls, useHlsJs, retried: true, keepReloaded, fromStart }); } catch { /* fall through */ }
+        try {
+          const server = await s.reconnect();
+          if (stale(ticket)) return;
+          s.server = server;
+          return load(i, { forceHls, useHlsJs, retried: true, keepReloaded, fromStart });
+        } catch { /* fall through */ }
+        if (stale(ticket)) return;
       }
       return fail("Can't reach your Plex server.", [['Try again', () => load(i)], ['Close', close]]);
     }
+    if (stale(ticket)) return;
     s.meta = meta;
     s.duration = meta.duration || item.duration || 0;
     const media = (meta.Media || [])[0];
@@ -277,11 +293,13 @@
     const direct = !forceHls && !bitrate && canPlayDirect(media);
     try {
       if (direct) await playDirect(part);
-      else await playHls(bitrate);
+      else await playHls(bitrate, ticket);
     } catch (e) {
+      if (stale(ticket)) return;
       fail(e.message || 'Could not play this video.', [['Try again', () => load(i)], ['Close', close]], e.report || errorKind(e));
       return;
     }
+    if (stale(ticket)) return;
     if (s.startAt) ui.restart.hidden = false;
     s.timer = setInterval(() => { if (!ui.video.paused) timeline('playing'); }, TIMELINE_EVERY_MS);
   }
@@ -332,9 +350,13 @@
     return ui.video.canPlayType(`${type}; codecs="${codecs}"`) !== '';
   }
 
+  // Paths can come from the server's own data (a file's key). Keep the request,
+  // and the token in it, on that server: "@other.host/x" would otherwise change the host.
   function serverUrl(path, extra = {}) {
     const p = new URLSearchParams({ ...extra, 'X-Plex-Token': s.server.token });
-    return `${s.server.uri}${path}${path.includes('?') ? '&' : '?'}${p}`;
+    const url = `${s.server.uri}${path}${path.includes('?') ? '&' : '?'}${p}`;
+    if (new URL(url).origin !== new URL(s.server.uri).origin) throw own('This video has an unexpected address, so it was not played.');
+    return url;
   }
 
   async function playDirect(part) {
@@ -372,11 +394,12 @@
     return p;
   }
 
-  async function playHls(bitrate) {
+  async function playHls(bitrate, ticket) {
     s.mode = 'hls';
     const params = hlsParams(bitrate);
     // Ask Plex first so a "can't play" answer becomes a readable message.
     const d = await api(`/video/:/transcode/universal/decision?${new URLSearchParams(params)}`).catch(() => null);
+    if (stale(ticket)) return;
     const mc = d && d.MediaContainer;
     if (mc && mc.generalDecisionCode >= 2000) {
       // Show Plex's reason on screen; the report gets only the numeric code.
@@ -390,6 +413,7 @@
     // "maybe" but fails on some streams. The browser's own player is the fallback.
     const native = v.canPlayType('application/vnd.apple.mpegurl') !== '';
     const Hls = native && AIRPLAY && !s.useHlsJs ? null : await loadHls().catch(() => null);
+    if (stale(ticket)) return;
     if (Hls && Hls.isSupported()) {
       s.hlsVia = 'hls.js';
       const hls = new Hls({ startPosition: s.startAt || -1, enableWorker: true, maxBufferLength: 30 });

@@ -1,7 +1,7 @@
 // Service worker: makes the app installable and opens instantly offline.
 // App files are fetched network-first, so a new deploy reaches phones on the
 // next open. Plex API calls (other origins) are never cached here.
-const CACHE = 'plex-playlists-v5';
+const CACHE = 'plex-playlists-v6';
 const SHELL = ['./', 'index.html', 'app.js', 'player.js', 'vendor/hls.light.min.js', 'styles.css', 'manifest.webmanifest', 'auth-done.html', 'auth-done.js',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'paypal-qr.png'];
 
@@ -17,7 +17,8 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   const req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  // Only this app's own files: not Plex, and not other sites on the same github.io origin.
+  if (req.method !== 'GET' || !req.url.startsWith(self.registration.scope)) return;
   e.respondWith((async () => {
     try {
       const res = await fetch(req, { cache: 'no-cache' });
