@@ -36,9 +36,6 @@ QuickPlaylist is not made by Plex and is not affiliated with Plex, Inc.
 
 The home-screen icon now opens straight to your playlists.
 
-Tip: open one playlist and add *that* page to your home screen to get a
-button that goes straight to it.
-
 ## Playback
 
 - If your browser can play the file as it is (for example MP4 with H.264 and
